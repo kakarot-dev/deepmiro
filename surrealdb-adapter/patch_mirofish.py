@@ -56,24 +56,49 @@ def apply_patch():
 
     zep_cloud.InternalServerError = InternalServerError
 
-    # Mock external_clients.ontology
+    # Mock external_clients.ontology — must be Pydantic BaseModel
+    # because graph_builder.py uses type(name, (EntityModel,), attrs)
+    # with pydantic.Field()
     zep_cloud_ontology = types.ModuleType("zep_cloud.external_clients.ontology")
 
-    @dataclass
-    class EntityModel:
-        name: str = ""
-        description: str = ""
+    try:
+        from pydantic import BaseModel as _BaseModel
 
-    @dataclass
-    class EntityText:
-        text: str = ""
+        class EntityModel(_BaseModel):
+            name: str = ""
+            description: str = ""
+            class Config:
+                extra = "allow"
 
-    @dataclass
-    class EdgeModel:
-        name: str = ""
-        description: str = ""
-        source_entity: str = ""
-        target_entity: str = ""
+        class EntityText(_BaseModel):
+            text: str = ""
+            class Config:
+                extra = "allow"
+
+        class EdgeModel(_BaseModel):
+            name: str = ""
+            description: str = ""
+            source_entity: str = ""
+            target_entity: str = ""
+            class Config:
+                extra = "allow"
+    except ImportError:
+        # Fallback to dataclass if pydantic not available
+        @dataclass
+        class EntityModel:
+            name: str = ""
+            description: str = ""
+
+        @dataclass
+        class EntityText:
+            text: str = ""
+
+        @dataclass
+        class EdgeModel:
+            name: str = ""
+            description: str = ""
+            source_entity: str = ""
+            target_entity: str = ""
 
     zep_cloud_ontology.EntityModel = EntityModel
     zep_cloud_ontology.EntityText = EntityText
