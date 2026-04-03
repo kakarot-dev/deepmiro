@@ -82,21 +82,47 @@ class EpisodeOpsShim:
 # Node operations shim
 # ---------------------------------------------------------------------------
 
+class DictAsObject:
+    """Wraps a dict so it can be accessed with attribute syntax (obj.name) or dict syntax (obj['name'])."""
+    def __init__(self, data: Dict[str, Any]):
+        self.__dict__.update(data)
+    def __getitem__(self, key):
+        return self.__dict__[key]
+    def get(self, key, default=None):
+        return self.__dict__.get(key, default)
+    def __repr__(self):
+        return f"DictAsObject({self.__dict__})"
+
+
+def _wrap(item):
+    """Wrap a dict as DictAsObject, pass through if already an object."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return DictAsObject(item)
+    return item
+
+
+def _wrap_list(items):
+    """Wrap a list of dicts as DictAsObjects."""
+    if items is None:
+        return []
+    return [_wrap(i) for i in items]
+
+
 class NodeOpsShim:
     def __init__(self, storage: GraphStorage):
         self._storage = storage
 
-    def get(self, uuid_: str = "", **kwargs) -> Optional[Dict[str, Any]]:
-        return self._storage.get_node(uuid_)
+    def get(self, uuid_: str = "", **kwargs):
+        return _wrap(self._storage.get_node(uuid_))
 
-    def get_entity_edges(self, node_uuid: str = "", **kwargs) -> List[Dict[str, Any]]:
-        return self._storage.get_node_edges(node_uuid)
+    def get_entity_edges(self, node_uuid: str = "", **kwargs):
+        return _wrap_list(self._storage.get_node_edges(node_uuid))
 
-    def get_by_graph_id(
-        self, graph_id: str, limit: int = 1000, uuid_cursor: str = "", **kwargs
-    ) -> List[Dict[str, Any]]:
+    def get_by_graph_id(self, graph_id: str, limit: int = 1000, uuid_cursor: str = "", **kwargs):
         """Emulates paginated fetch — returns all nodes (no cursor)."""
-        return self._storage.get_all_nodes(graph_id, limit=limit)
+        return _wrap_list(self._storage.get_all_nodes(graph_id, limit=limit))
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +135,9 @@ class EdgeOpsShim:
 
     def get_by_graph_id(
         self, graph_id: str, limit: int = 1000, uuid_cursor: str = "", **kwargs
-    ) -> List[Dict[str, Any]]:
+    ):
         """Emulates paginated fetch — returns all edges."""
-        return self._storage.get_all_edges(graph_id)
+        return _wrap_list(self._storage.get_all_edges(graph_id))
 
 
 # ---------------------------------------------------------------------------
@@ -199,9 +225,17 @@ class GraphOpsShim:
         return self._storage.add_text_batch(graph_id, chunks)
 
     def search(self, graph_id: str = "", query: str = "", limit: int = 10,
-               scope: str = "edges", reranker: str = "", **kwargs) -> Dict[str, Any]:
+               scope: str = "edges", reranker: str = "", **kwargs):
         """Search with reranker param silently ignored (uses hybrid scoring)."""
-        return self._storage.search(graph_id, query, limit=limit, scope=scope)
+        result = self._storage.search(graph_id, query, limit=limit, scope=scope)
+        # Wrap nodes and edges in the result so they're accessible as attributes
+        if isinstance(result, dict):
+            if "nodes" in result:
+                result["nodes"] = _wrap_list(result["nodes"])
+            if "edges" in result:
+                result["edges"] = _wrap_list(result["edges"])
+            return DictAsObject(result)
+        return result
 
 
 # ---------------------------------------------------------------------------
