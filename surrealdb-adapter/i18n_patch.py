@@ -1140,4 +1140,35 @@ def apply_i18n_patch():
     _patch_report_agent()
     _patch_ontology_generator()
     _patch_oasis_profile_generator()
+    patch_graph_builder()
     logger.info("i18n patch applied: all LLM prompts switched to English")
+
+
+# ---------------------------------------------------------------------------
+# Patch graph_builder to handle malformed ontology attributes
+# ---------------------------------------------------------------------------
+
+def patch_graph_builder():
+    """Fix ontology attributes that are dicts instead of lists."""
+    try:
+        from app.services import graph_builder as gb
+        original_set_ontology = gb.GraphBuilderService.set_ontology
+
+        def patched_set_ontology(self, graph_id, ontology):
+            # Normalize: ensure all "attributes" fields are lists
+            for key in ("entity_types", "edge_types"):
+                for item in ontology.get(key, []):
+                    attrs = item.get("attributes", [])
+                    if isinstance(attrs, dict):
+                        # Convert dict to list of dicts
+                        item["attributes"] = [
+                            {"name": k, **(v if isinstance(v, dict) else {"description": str(v)})}
+                            for k, v in attrs.items()
+                        ]
+            return original_set_ontology(self, graph_id, ontology)
+
+        gb.GraphBuilderService.set_ontology = patched_set_ontology
+        logger.info("graph_builder: ontology attribute normalization patched")
+    except ImportError:
+        pass
+
