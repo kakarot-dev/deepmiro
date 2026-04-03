@@ -108,8 +108,21 @@ Claude Code/Desktop
 
 [AGPL-3.0](LICENSE) — Free to use, modify, and distribute. If you offer this as a service, you must open-source your changes.
 
-## Credits
+## Acknowledgements
 
-- [MiroFish](https://github.com/666ghj/MiroFish) by Guo Hangjiang — the swarm simulation engine
-- [MiroShark](https://github.com/aaronjmars/MiroShark) — Neo4j adapter patterns
-- [OASIS](https://github.com/camel-ai/oasis) by CAMEL-AI — the underlying simulation framework
+This project builds on the work of several open-source projects. We are grateful to their creators and contributors.
+
+### Core Engine
+- **[MiroFish](https://github.com/666ghj/MiroFish)** by [Guo Hangjiang](https://github.com/666ghj) — The swarm intelligence simulation engine that powers everything. mirofish-mcp is a wrapper around MiroFish, not a replacement. Licensed under AGPL-3.0.
+
+### Neo4j Storage Layer
+- **[MiroShark](https://github.com/aaronjmars/MiroShark)** by [aaronjmars](https://github.com/aaronjmars) — Our Neo4j adapter (replacing Zep Cloud) is ported from MiroShark's storage layer, including the `GraphStorage` abstraction, `Neo4jStorage` implementation, hybrid search (vector + BM25), LLM-based NER extraction, and embedding service. Licensed under AGPL-3.0.
+
+### Simulation Framework
+- **[OASIS](https://github.com/camel-ai/oasis)** by [CAMEL-AI](https://github.com/camel-ai) — The Open Agent Social Interaction Simulations framework that MiroFish uses to run multi-agent simulations at scale.
+
+### MCP Protocol
+- **[Model Context Protocol](https://modelcontextprotocol.io/)** by [Anthropic](https://anthropic.com) — The protocol that makes this integration with Claude Code and Claude Desktop possible.
+
+### Infrastructure
+- **[Fireworks AI](https://fireworks.ai/)** — Default LLM inference provider for the hosted service.

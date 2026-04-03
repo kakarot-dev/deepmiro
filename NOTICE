@@ -1,0 +1,45 @@
+mirofish-mcp
+Copyright 2026 kakarot-dev
+
+This project incorporates code from the following open-source projects:
+
+---
+
+MiroFish
+Copyright 2025-2026 Guo Hangjiang (666ghj)
+Licensed under AGPL-3.0
+https://github.com/666ghj/MiroFish
+
+mirofish-mcp wraps the MiroFish backend as an MCP server. The MiroFish
+backend is used as-is and is not modified or redistributed in this repository.
+
+---
+
+MiroShark
+Copyright 2026 aaronjmars
+Licensed under AGPL-3.0
+https://github.com/aaronjmars/MiroShark
+
+The Neo4j storage adapter layer (neo4j-adapter/) is ported from MiroShark's
+backend/app/storage/ directory. This includes the GraphStorage abstract
+interface, Neo4jStorage implementation, EmbeddingService, SearchService,
+NERExtractor, and neo4j_schema module. Modifications are documented in
+neo4j-adapter/README.md.
+
+---
+
+OASIS (Open Agent Social Interaction Simulations)
+Copyright CAMEL-AI
+Licensed under Apache-2.0
+https://github.com/camel-ai/oasis
+
+Used by MiroFish as the underlying multi-agent simulation framework.
+
+---
+
+Model Context Protocol SDK
+Copyright 2024-2026 Anthropic
+Licensed under MIT
+https://github.com/modelcontextprotocol/typescript-sdk
+
+The MCP TypeScript SDK is used to build the mirofish-mcp server.
