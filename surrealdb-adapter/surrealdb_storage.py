@@ -135,23 +135,28 @@ class SurrealDBStorage(GraphStorage):
         return self._with_retry(self._db.query, surql)
 
     @staticmethod
-    def _rows(result: list, index: int = 0) -> list:
+    def _rows(result, index: int = 0) -> list:
         """Safely extract result rows from a SurrealDB query response.
 
-        SurrealDB returns a list of result objects; each has a ``result``
-        key holding the row list.  Different SDK versions may return plain
-        lists or dicts -- this helper handles both.
+        SDK v1.0.8 returns results directly (flat list of dicts for SELECT,
+        single value for RETURN, etc.). Older/newer SDKs may wrap in
+        [{"result": [...]}]. This helper handles all formats.
         """
-        if not result:
+        if result is None:
             return []
-        item = result[index] if index < len(result) else None
-        if item is None:
-            return []
-        # SDK may return dict with "result" key, or a plain list
-        if isinstance(item, dict):
-            return item.get("result", []) or []
-        if isinstance(item, list):
-            return item
+        # SDK v1.0.8: query returns the rows directly as a list
+        if isinstance(result, list):
+            if not result:
+                return []
+            # Check if it's a list of result-wrapper dicts (older SDK format)
+            if isinstance(result[0], dict) and "result" in result[0] and "status" in result[0]:
+                item = result[index] if index < len(result) else None
+                return (item.get("result", []) or []) if item else []
+            # It's already a flat list of row dicts — return as-is
+            return result
+        # Single value (e.g. from RETURN)
+        if isinstance(result, dict):
+            return [result]
         return []
 
     # ================================================================
