@@ -5,11 +5,21 @@
 from .ontology_generator import OntologyGenerator
 from .graph_builder import GraphBuilderService
 from .text_processor import TextProcessor
-from .zep_entity_reader import ZepEntityReader, EntityNode, FilteredEntities
+
+# New storage-backed names
+from .entity_reader import EntityReader, EntityNode, FilteredEntities
+from .graph_tools import GraphToolsService
+from .graph_memory_updater import GraphMemoryUpdater, GraphMemoryManager, AgentActivity
+
+# Backward-compatible Zep-prefixed aliases
+from .zep_entity_reader import ZepEntityReader
+from .zep_graph_memory_updater import ZepGraphMemoryUpdater, ZepGraphMemoryManager
+from .zep_tools import ZepToolsService
+
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_manager import SimulationManager, SimulationState, SimulationStatus
 from .simulation_config_generator import (
-    SimulationConfigGenerator, 
+    SimulationConfigGenerator,
     SimulationParameters,
     AgentActivityConfig,
     TimeSimulationConfig,
@@ -23,11 +33,6 @@ from .simulation_runner import (
     AgentAction,
     RoundSummary
 )
-from .zep_graph_memory_updater import (
-    ZepGraphMemoryUpdater,
-    ZepGraphMemoryManager,
-    AgentActivity
-)
 from .simulation_ipc import (
     SimulationIPCClient,
     SimulationIPCServer,
@@ -38,12 +43,23 @@ from .simulation_ipc import (
 )
 
 __all__ = [
-    'OntologyGenerator', 
-    'GraphBuilderService', 
+    'OntologyGenerator',
+    'GraphBuilderService',
     'TextProcessor',
+    # New names
+    'EntityReader',
+    'GraphToolsService',
+    'GraphMemoryUpdater',
+    'GraphMemoryManager',
+    # Legacy aliases
     'ZepEntityReader',
+    'ZepToolsService',
+    'ZepGraphMemoryUpdater',
+    'ZepGraphMemoryManager',
+    # Shared
     'EntityNode',
     'FilteredEntities',
+    'AgentActivity',
     'OasisProfileGenerator',
     'OasisAgentProfile',
     'SimulationManager',
@@ -60,9 +76,6 @@ __all__ = [
     'RunnerStatus',
     'AgentAction',
     'RoundSummary',
-    'ZepGraphMemoryUpdater',
-    'ZepGraphMemoryManager',
-    'AgentActivity',
     'SimulationIPCClient',
     'SimulationIPCServer',
     'IPCCommand',
@@ -70,4 +83,3 @@ __all__ = [
     'CommandType',
     'CommandStatus',
 ]
-

@@ -31,10 +31,38 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+
+    # Boost LLM配置（高质量模型，用于报告和人设生成）
+    LLM_BOOST_API_KEY = os.environ.get('LLM_BOOST_API_KEY', '')
+    LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL', '')
+    LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME', '')
     
-    # Zep配置
+    # Zep配置 (legacy fallback -- only needed when GRAPH_BACKEND=zep)
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
-    
+
+    # Graph storage backend: "surrealdb" (default) or "zep"
+    GRAPH_BACKEND = os.environ.get('GRAPH_BACKEND', 'surrealdb')
+
+    # SurrealDB配置 (used when GRAPH_BACKEND=surrealdb)
+    SURREAL_URL = os.environ.get('SURREAL_URL', 'ws://localhost:8000')
+    SURREAL_NAMESPACE = os.environ.get('SURREAL_NAMESPACE', 'mirofish')
+    SURREAL_DATABASE = os.environ.get('SURREAL_DATABASE', 'production')
+    SURREAL_USER = os.environ.get('SURREAL_USER', 'root')
+    SURREAL_PASSWORD = os.environ.get('SURREAL_PASSWORD', '')
+
+    # Embedding配置 (used by SurrealDB backend for vector search)
+    EMBEDDING_PROVIDER = os.environ.get('EMBEDDING_PROVIDER', 'openai')
+    EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'nomic-ai/nomic-embed-text-v1.5')
+    EMBEDDING_BASE_URL = os.environ.get(
+        'EMBEDDING_BASE_URL',
+        os.environ.get('LLM_BASE_URL', 'https://api.fireworks.ai/inference/v1')
+    )
+    EMBEDDING_API_KEY = os.environ.get(
+        'EMBEDDING_API_KEY',
+        os.environ.get('LLM_API_KEY', '')
+    )
+    EMBEDDING_DIMENSIONS = int(os.environ.get('EMBEDDING_DIMENSIONS', '768'))
+
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
@@ -69,7 +97,14 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置")
+        # Only require ZEP_API_KEY when using the Zep backend
+        if cls.GRAPH_BACKEND == 'zep' and not cls.ZEP_API_KEY:
+            errors.append("ZEP_API_KEY 未配置 (GRAPH_BACKEND=zep)")
+        # Validate SurrealDB config when using that backend
+        if cls.GRAPH_BACKEND == 'surrealdb':
+            if not cls.SURREAL_URL:
+                errors.append("SURREAL_URL 未配置")
+            if not cls.SURREAL_PASSWORD:
+                errors.append("SURREAL_PASSWORD 未配置")
         return errors
 
