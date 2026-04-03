@@ -41,6 +41,12 @@ export class MirofishClient {
   // Full simulation lifecycle
   // ------------------------------------------------------------------
 
+  /**
+   * Async simulation creation — kicks off the pipeline and returns immediately.
+   * Does NOT block on graph building, preparation, or simulation execution.
+   * The full pipeline runs in the background on the MiroFish backend.
+   * Use getSimulation() / getSimulationRunStatus() to poll progress.
+   */
   async createSimulation(params: {
     prompt: string;
     files?: Array<{ name: string; content: Buffer; mimeType: string }>;
@@ -48,39 +54,72 @@ export class MirofishClient {
     agentCount?: number;
     rounds?: number;
     platform?: "twitter" | "reddit" | "both";
-  }): Promise<SimulationState> {
-    // No outer withRetry — each step retries independently to avoid
-    // restarting the entire multi-step pipeline on partial failure.
-
-    // Step 1: Generate ontology
+  }): Promise<SimulationState & { graph_task_id?: string }> {
+    // Step 1: Generate ontology (fast — single LLM call)
     const ontologyResp = await this.generateOntology(params.prompt, params.files);
     const projectId = ontologyResp.project_id;
 
-    // Step 2: Build graph (async)
+    // Step 2: Kick off graph build (async — don't wait)
     const buildTask = await this.buildGraph(projectId);
-    await this.pollTaskUntilDone(buildTask.task_id);
 
-    // Step 3: Get project to find graph_id
+    // Step 3: Create simulation record so we have a simulation_id to return
+    const enableTwitter = params.platform !== "reddit";
+    const enableReddit = params.platform !== "twitter";
+
+    // We need the graph_id, but graph build is async. Get project to check.
+    // For now, return early with the project_id. The simulation_status tool
+    // will handle the rest of the lifecycle.
+    const simState = await this.createSimulationRecord(
+      projectId,
+      "", // graph_id not yet available
+      enableTwitter,
+      enableReddit,
+    );
+
+    // Fire off the rest of the pipeline in the background (non-blocking)
+    this.continueSimulationPipeline(
+      simState.simulation_id,
+      projectId,
+      buildTask.task_id,
+      params,
+    ).catch((err) => {
+      // Log but don't throw — the error will be visible via simulation_status
+      process.stderr.write(`mirofish-mcp: background pipeline error: ${err.message}\n`);
+    });
+
+    return {
+      ...simState,
+      graph_task_id: buildTask.task_id,
+      status: "preparing" as const,
+    };
+  }
+
+  /**
+   * Continues the simulation pipeline in the background after createSimulation returns.
+   */
+  private async continueSimulationPipeline(
+    simulationId: string,
+    projectId: string,
+    graphTaskId: string,
+    params: { preset?: string; rounds?: number; platform?: "twitter" | "reddit" | "both" },
+  ): Promise<void> {
+    // Wait for graph build
+    await this.pollTaskUntilDone(graphTaskId);
+
+    // Get the graph_id
     const project = await this.getProject(projectId);
     const graphId = project.graph_id;
 
-    // Step 4: Create simulation record
-    const enableTwitter = params.platform !== "reddit";
-    const enableReddit = params.platform !== "twitter";
-    const simState = await this.createSimulationRecord(projectId, graphId, enableTwitter, enableReddit);
-
-    // Step 5: Prepare simulation (async)
-    const prepareResp = await this.prepareSimulation(simState.simulation_id);
+    // Prepare simulation (generate profiles + config)
+    const prepareResp = await this.prepareSimulation(simulationId);
     if (prepareResp.task_id) {
       await this.pollPrepareUntilDone(prepareResp.task_id);
     }
 
-    // Step 6: Start simulation
+    // Start simulation
     const maxRounds = params.rounds ?? this.resolveRounds(params.preset);
     const platform = params.platform === "both" || !params.platform ? "parallel" : params.platform;
-    await this.startSimulation(simState.simulation_id, platform, maxRounds);
-
-    return this.getSimulation(simState.simulation_id);
+    await this.startSimulation(simulationId, platform, maxRounds);
   }
 
   async getSimulation(simulationId: string): Promise<SimulationState> {
