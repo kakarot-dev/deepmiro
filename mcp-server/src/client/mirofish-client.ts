@@ -49,37 +49,38 @@ export class MirofishClient {
     rounds?: number;
     platform?: "twitter" | "reddit" | "both";
   }): Promise<SimulationState> {
-    return withRetry(async () => {
-      // Step 1: Generate ontology
-      const ontologyResp = await this.generateOntology(params.prompt, params.files);
-      const projectId = ontologyResp.project_id;
+    // No outer withRetry — each step retries independently to avoid
+    // restarting the entire multi-step pipeline on partial failure.
 
-      // Step 2: Build graph (async)
-      const buildTask = await this.buildGraph(projectId);
-      await this.pollTaskUntilDone(buildTask.task_id);
+    // Step 1: Generate ontology
+    const ontologyResp = await this.generateOntology(params.prompt, params.files);
+    const projectId = ontologyResp.project_id;
 
-      // Step 3: Get project to find graph_id
-      const project = await this.getProject(projectId);
-      const graphId = project.graph_id;
+    // Step 2: Build graph (async)
+    const buildTask = await this.buildGraph(projectId);
+    await this.pollTaskUntilDone(buildTask.task_id);
 
-      // Step 4: Create simulation record
-      const enableTwitter = params.platform !== "reddit";
-      const enableReddit = params.platform !== "twitter";
-      const simState = await this.createSimulationRecord(projectId, graphId, enableTwitter, enableReddit);
+    // Step 3: Get project to find graph_id
+    const project = await this.getProject(projectId);
+    const graphId = project.graph_id;
 
-      // Step 5: Prepare simulation (async)
-      const prepareResp = await this.prepareSimulation(simState.simulation_id);
-      if (prepareResp.task_id) {
-        await this.pollPrepareUntilDone(prepareResp.task_id);
-      }
+    // Step 4: Create simulation record
+    const enableTwitter = params.platform !== "reddit";
+    const enableReddit = params.platform !== "twitter";
+    const simState = await this.createSimulationRecord(projectId, graphId, enableTwitter, enableReddit);
 
-      // Step 6: Start simulation
-      const maxRounds = params.rounds ?? this.resolveRounds(params.preset);
-      const platform = params.platform === "both" || !params.platform ? "parallel" : params.platform;
-      await this.startSimulation(simState.simulation_id, platform, maxRounds);
+    // Step 5: Prepare simulation (async)
+    const prepareResp = await this.prepareSimulation(simState.simulation_id);
+    if (prepareResp.task_id) {
+      await this.pollPrepareUntilDone(prepareResp.task_id);
+    }
 
-      return this.getSimulation(simState.simulation_id);
-    }, this.maxRetries);
+    // Step 6: Start simulation
+    const maxRounds = params.rounds ?? this.resolveRounds(params.preset);
+    const platform = params.platform === "both" || !params.platform ? "parallel" : params.platform;
+    await this.startSimulation(simState.simulation_id, platform, maxRounds);
+
+    return this.getSimulation(simState.simulation_id);
   }
 
   async getSimulation(simulationId: string): Promise<SimulationState> {
@@ -207,8 +208,8 @@ export class MirofishClient {
     }
 
     const resp = await this.http.post("/api/graph/ontology/generate", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
       timeout: this.config.requestTimeoutMs,
+      // Let axios auto-set Content-Type with correct multipart boundary
     });
     const unwrapped = this.unwrap<{ project_id: string }>(resp.data);
     return unwrapped.data!;
@@ -216,12 +217,14 @@ export class MirofishClient {
 
   private async buildGraph(projectId: string): Promise<{ task_id: string }> {
     const resp = await this.post<{ task_id: string }>("/api/graph/build", { project_id: projectId });
-    return resp.data!;
+    if (!resp.data) throw new MirofishBackendError("Build graph returned no data", 500);
+    return resp.data;
   }
 
   private async getProject(projectId: string): Promise<{ graph_id: string }> {
     const resp = await this.get<{ graph_id: string }>(`/api/graph/project/${projectId}`);
-    return resp.data!;
+    if (!resp.data) throw new MirofishBackendError("Project not found", 404);
+    return resp.data;
   }
 
   private async createSimulationRecord(
@@ -236,7 +239,8 @@ export class MirofishClient {
       enable_twitter: enableTwitter,
       enable_reddit: enableReddit,
     });
-    return resp.data!;
+    if (!resp.data) throw new MirofishBackendError("Create simulation returned no data", 500);
+    return resp.data;
   }
 
   private async prepareSimulation(simulationId: string): Promise<{ task_id?: string }> {
@@ -245,7 +249,8 @@ export class MirofishClient {
       use_llm_for_profiles: true,
       parallel_profile_count: 3,
     });
-    return resp.data!;
+    if (!resp.data) throw new MirofishBackendError("Prepare simulation returned no data", 500);
+    return resp.data;
   }
 
   private async startSimulation(simulationId: string, platform: string, maxRounds?: number): Promise<void> {
