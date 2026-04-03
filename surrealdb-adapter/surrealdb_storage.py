@@ -350,7 +350,7 @@ class SurrealDBStorage(GraphStorage):
                             LIMIT 1);
 
                 IF array::len($src) > 0 AND array::len($tgt) > 0 {
-                    RELATE $src[0] -> relation -> $tgt[0] SET
+                    RELATE $src -> relation -> $tgt SET
                         graph_id = $gid,
                         name = $rel_name,
                         fact = $fact,
