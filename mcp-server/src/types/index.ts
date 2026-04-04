@@ -11,6 +11,23 @@ export interface MirofishConfig {
   maxRetries: number;
 }
 
+/**
+ * User context resolved from auth (API key or session).
+ * Set by hosted auth layer or CF Worker headers.
+ */
+export interface AuthContext {
+  userId: string;
+  tier: string;
+}
+
+/**
+ * Pluggable auth provider for hosted mode.
+ * Self-hosted mode falls back to MCP_API_KEY timing-safe check.
+ */
+export interface AuthProvider {
+  validateRequest(req: import("express").Request): Promise<AuthContext | null>;
+}
+
 export interface MirofishApiResponse<T = unknown> {
   success: boolean;
   data?: T;
@@ -124,4 +141,83 @@ export interface TaskInfo {
   message: string;
   result?: Record<string, unknown>;
   error?: string;
+  progress_detail?: Record<string, unknown>;
+}
+
+// --- Rich simulation status ---
+
+export type PipelinePhase =
+  | "building_graph"
+  | "generating_profiles"
+  | "simulating"
+  | "generating_report"
+  | "completed"
+  | "failed";
+
+export interface RichSimulationStatus {
+  simulation_id: string;
+  phase: PipelinePhase;
+  phase_display: string;
+  progress: number;
+  detail?: string;
+  message: string;
+  // building_graph
+  // (no extra fields — progress + detail suffice)
+  // generating_profiles
+  entities_count?: number;
+  profiles_generated?: number;
+  recent_profiles?: string[];
+  // simulating
+  current_round?: number;
+  total_rounds?: number;
+  total_actions?: number;
+  twitter_actions?: number;
+  reddit_actions?: number;
+  recent_actions?: Array<{
+    agent: string;
+    action: string;
+    platform: string;
+    round: number;
+    content?: string;
+  }>;
+  // completed
+  report_available?: boolean;
+  // error
+  error?: string;
+}
+
+// --- Pipeline tracker (in-memory, per client) ---
+
+export interface PipelineTracker {
+  projectId: string;
+  graphTaskId: string;
+  simulationId?: string;
+  prepareTaskId?: string;
+  phase: PipelinePhase;
+  error?: string;
+}
+
+// --- Document upload ---
+
+export interface DocumentUploadResult {
+  document_id: string;
+  filename: string;
+  text_length: number;
+  mime_type: string;
+}
+
+// --- Prepare status detail ---
+
+export interface PrepareStatusDetail {
+  status: string;
+  progress: number;
+  message?: string;
+  is_complete?: boolean;
+  progress_detail?: {
+    current_stage?: string;
+    stage_progress?: number;
+    current_item?: number;
+    total_items?: number;
+    item_description?: string;
+  };
 }

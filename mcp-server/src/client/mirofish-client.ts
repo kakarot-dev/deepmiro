@@ -5,12 +5,16 @@ import axios, { AxiosInstance } from "axios";
 import type {
   MirofishConfig,
   MirofishApiResponse,
+  AuthContext,
   SimulationState,
   SimulationRunStatus,
   SimulationSummary,
   Report,
   InterviewResult,
   TaskInfo,
+  PipelineTracker,
+  DocumentUploadResult,
+  PrepareStatusDetail,
 } from "../types/index.js";
 import {
   MirofishBackendError,
@@ -21,6 +25,10 @@ import {
 export class MirofishClient {
   private http: AxiosInstance;
   private maxRetries: number;
+  private userContext?: AuthContext;
+
+  /** In-memory pipeline state for pending simulations (projectId → tracker) */
+  readonly pipelineTrackers = new Map<string, PipelineTracker>();
 
   constructor(private config: MirofishConfig) {
     this.maxRetries = config.maxRetries;
@@ -30,6 +38,23 @@ export class MirofishClient {
       // Don't set Content-Type globally — let axios auto-detect
       // (FormData needs multipart/form-data with boundary, JSON needs application/json)
     });
+
+    // Inject user context headers on every request when set
+    this.http.interceptors.request.use((reqConfig) => {
+      if (this.userContext) {
+        reqConfig.headers["X-User-Id"] = this.userContext.userId;
+        reqConfig.headers["X-User-Tier"] = this.userContext.tier;
+      }
+      return reqConfig;
+    });
+  }
+
+  /**
+   * Set user context for this client instance.
+   * When set, X-User-Id and X-User-Tier headers are injected into all backend requests.
+   */
+  setUserContext(ctx: AuthContext): void {
+    this.userContext = ctx;
   }
 
   async healthCheck(): Promise<boolean> {
@@ -54,17 +79,25 @@ export class MirofishClient {
   async createSimulation(params: {
     prompt: string;
     files?: Array<{ name: string; content: Buffer; mimeType: string }>;
+    documentId?: string;
     preset?: string;
     agentCount?: number;
     rounds?: number;
     platform?: "twitter" | "reddit" | "both";
   }): Promise<SimulationState & { graph_task_id?: string }> {
     // Step 1: Generate ontology (fast — single LLM call)
-    const ontologyResp = await this.generateOntology(params.prompt, params.files);
+    const ontologyResp = await this.generateOntology(params.prompt, params.files, params.documentId);
     const projectId = ontologyResp.project_id;
 
     // Step 2: Kick off graph build (async — don't wait)
     const buildTask = await this.buildGraph(projectId);
+
+    // Track pipeline state for rich status
+    this.pipelineTrackers.set(projectId, {
+      projectId,
+      graphTaskId: buildTask.task_id,
+      phase: "building_graph",
+    });
 
     // Step 3: Run the entire remaining pipeline in background
     // (graph build → get graph_id → create sim → prepare → start)
@@ -106,28 +139,45 @@ export class MirofishClient {
     enableReddit: boolean,
     params: { preset?: string; rounds?: number; platform?: "twitter" | "reddit" | "both" },
   ): Promise<void> {
-    // Wait for graph build
-    await this.pollTaskUntilDone(graphTaskId);
+    const tracker = this.pipelineTrackers.get(projectId);
+    try {
+      // Wait for graph build
+      await this.pollTaskUntilDone(graphTaskId);
 
-    // Get the graph_id
-    const project = await this.getProject(projectId);
-    const graphId = project.graph_id;
+      // Get the graph_id
+      const project = await this.getProject(projectId);
+      const graphId = project.graph_id;
 
-    // Create simulation record (now graph_id is available)
-    const simState = await this.createSimulationRecord(
-      projectId, graphId, enableTwitter, enableReddit,
-    );
+      // Create simulation record
+      const simState = await this.createSimulationRecord(
+        projectId, graphId, enableTwitter, enableReddit,
+      );
+      if (tracker) {
+        tracker.simulationId = simState.simulation_id;
+        tracker.phase = "generating_profiles";
+      }
 
-    // Prepare simulation (generate profiles + config)
-    const prepareResp = await this.prepareSimulation(simState.simulation_id);
-    if (prepareResp.task_id) {
-      await this.pollPrepareUntilDone(prepareResp.task_id);
+      // Prepare simulation (generate profiles + config)
+      const prepareResp = await this.prepareSimulation(simState.simulation_id);
+      if (tracker && prepareResp.task_id) {
+        tracker.prepareTaskId = prepareResp.task_id;
+      }
+      if (prepareResp.task_id) {
+        await this.pollPrepareUntilDone(prepareResp.task_id);
+      }
+
+      // Start simulation
+      if (tracker) tracker.phase = "simulating";
+      const maxRounds = params.rounds ?? this.resolveRounds(params.preset);
+      const platform = params.platform === "both" || !params.platform ? "parallel" : params.platform;
+      await this.startSimulation(simState.simulation_id, platform, maxRounds);
+    } catch (err) {
+      if (tracker) {
+        tracker.phase = "failed";
+        tracker.error = err instanceof Error ? err.message : String(err);
+      }
+      throw err;
     }
-
-    // Start simulation
-    const maxRounds = params.rounds ?? this.resolveRounds(params.preset);
-    const platform = params.platform === "both" || !params.platform ? "parallel" : params.platform;
-    await this.startSimulation(simState.simulation_id, platform, maxRounds);
   }
 
   async getSimulation(simulationId: string): Promise<SimulationState> {
@@ -183,9 +233,20 @@ export class MirofishClient {
       if (reportResp.data) return reportResp.data;
     }
 
-    // Poll until generation completes
+    // Poll with short timeout — don't block Claude for 5 minutes
     if (genResp.data?.task_id) {
-      await this.pollReportUntilDone(genResp.data.task_id);
+      try {
+        await this.pollReportUntilDone(genResp.data.task_id, 60_000);
+      } catch {
+        // Timeout — return what we have so far
+        return {
+          report_id: genResp.data.report_id,
+          simulation_id: simulationId,
+          status: "generating" as const,
+          markdown_content: "Report is still being generated. Call get_report again in a minute.",
+          created_at: new Date().toISOString(),
+        };
+      }
     }
 
     const finalResp = await this.get<Report>(`/api/report/by-simulation/${simulationId}`);
@@ -238,9 +299,68 @@ export class MirofishClient {
   // Internal: lower-level API calls
   // ------------------------------------------------------------------
 
+  // ------------------------------------------------------------------
+  // Document upload
+  // ------------------------------------------------------------------
+
+  async uploadDocument(filePath: string): Promise<DocumentUploadResult> {
+    const fs = await import("fs");
+    const path = await import("path");
+    const FormDataNode = (await import("form-data")).default;
+    const formData = new FormDataNode();
+    formData.append("file", fs.createReadStream(filePath), {
+      filename: path.basename(filePath),
+    });
+    const resp = await this.http.post("/api/documents/upload", formData, {
+      timeout: this.config.requestTimeoutMs,
+      headers: formData.getHeaders(),
+    });
+    const unwrapped = this.unwrap<DocumentUploadResult>(resp.data);
+    if (!unwrapped.data) throw new MirofishBackendError("Document upload returned no data", 500);
+    return unwrapped.data;
+  }
+
+  // ------------------------------------------------------------------
+  // Rich status helpers
+  // ------------------------------------------------------------------
+
+  async getSimulationRunStatusDetail(simulationId: string): Promise<SimulationRunStatus & { all_actions?: unknown[] }> {
+    const resp = await this.get<SimulationRunStatus & { all_actions?: unknown[] }>(
+      `/api/simulation/${simulationId}/run-status/detail`,
+    );
+    if (!resp.data) throw new SimulationNotFoundError(simulationId);
+    return resp.data;
+  }
+
+  async getGraphTaskStatus(taskId: string): Promise<TaskInfo> {
+    const resp = await this.get<TaskInfo>(`/api/graph/task/${taskId}`);
+    if (!resp.data) throw new MirofishBackendError(`Task not found: ${taskId}`, 404);
+    return resp.data;
+  }
+
+  async getPrepareStatus(simulationId: string): Promise<PrepareStatusDetail> {
+    const resp = await this.post<PrepareStatusDetail>("/api/simulation/prepare/status", {
+      simulation_id: simulationId,
+    });
+    return resp.data ?? { status: "unknown", progress: 0 };
+  }
+
+  async listSimulationsByProject(projectId: string): Promise<SimulationSummary[]> {
+    const resp = await this.get<SimulationSummary[]>("/api/simulation/history", {
+      project_id: projectId,
+      limit: 5,
+    });
+    return resp.data ?? [];
+  }
+
+  // ------------------------------------------------------------------
+  // Internal: lower-level API calls
+  // ------------------------------------------------------------------
+
   private async generateOntology(
     simulationRequirement: string,
     files?: Array<{ name: string; content: Buffer; mimeType: string }>,
+    documentId?: string,
   ): Promise<{ project_id: string }> {
     // Use form-data package (not native FormData) for Node.js + axios compatibility
     const FormDataNode = (await import("form-data")).default;
@@ -248,7 +368,9 @@ export class MirofishClient {
     formData.append("simulation_requirement", simulationRequirement);
     formData.append("project_name", "MCP Simulation");
 
-    if (files && files.length > 0) {
+    if (documentId) {
+      formData.append("document_id", documentId);
+    } else if (files && files.length > 0) {
       for (const file of files) {
         formData.append("files", file.content, {
           filename: file.name,

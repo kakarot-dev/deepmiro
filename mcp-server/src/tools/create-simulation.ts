@@ -31,6 +31,10 @@ const inputSchema = {
     .enum(["twitter", "reddit", "both"])
     .optional()
     .describe("Target platform(s). Default: both"),
+  document_id: z
+    .string()
+    .optional()
+    .describe("ID of a pre-uploaded document (from upload_document tool). Skips file upload and uses server-side sanitized text."),
 };
 
 export function registerCreateSimulation(server: McpServer, client: MirofishClient): void {
@@ -56,6 +60,7 @@ export function registerCreateSimulation(server: McpServer, client: MirofishClie
         const sim = await client.createSimulation({
           prompt: args.prompt,
           files,
+          documentId: args.document_id,
           preset: args.preset,
           agentCount: args.agent_count,
           rounds: args.rounds,
