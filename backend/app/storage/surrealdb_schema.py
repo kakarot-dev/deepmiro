@@ -272,6 +272,31 @@ DEFINE FIELD updated_at    ON agent_chat_memory TYPE datetime DEFAULT time::now(
 DEFINE INDEX idx_acm_sim_agent ON agent_chat_memory FIELDS simulation_id, agent_id, platform UNIQUE;
 """
 
+# ---------------------------------------------------------------------------
+# Simulation post embeddings (vector feed for rec table)
+# ---------------------------------------------------------------------------
+
+SCHEMA_SIM_POST = """
+DEFINE TABLE sim_post SCHEMAFULL;
+
+DEFINE FIELD simulation_id ON sim_post TYPE string   ASSERT $value != NONE;
+DEFINE FIELD platform      ON sim_post TYPE string   DEFAULT "twitter";
+DEFINE FIELD post_id       ON sim_post TYPE int      ASSERT $value != NONE;
+DEFINE FIELD user_id       ON sim_post TYPE int      DEFAULT 0;
+DEFINE FIELD content       ON sim_post TYPE string   DEFAULT "";
+DEFINE FIELD embedding     ON sim_post TYPE array<float> DEFAULT [];
+DEFINE FIELD created_at    ON sim_post TYPE datetime DEFAULT time::now();
+
+DEFINE INDEX idx_sp_sim ON sim_post FIELDS simulation_id, platform;
+DEFINE INDEX idx_sp_post ON sim_post FIELDS simulation_id, platform, post_id UNIQUE;
+DEFINE INDEX idx_sp_vec ON sim_post FIELDS embedding
+    HNSW DIMENSION 768
+    DIST COSINE
+    TYPE F32
+    EFC 150
+    M 12;
+"""
+
 
 # ---------------------------------------------------------------------------
 # Public helpers
@@ -288,6 +313,7 @@ ALL_SCHEMAS = [
     SCHEMA_SIMULATION_RUN,
     SCHEMA_ONTOLOGY,
     SCHEMA_AGENT_CHAT_MEMORY,
+    SCHEMA_SIM_POST,
 ]
 
 
