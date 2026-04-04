@@ -1,0 +1,9 @@
+{
+  "deepmiro": {
+    "type": "http",
+    "url": "https://deepmiro.org/mcp",
+    "headers": {
+      "Authorization": "Bearer ${DEEPMIRO_API_KEY}"
+    }
+  }
+}
