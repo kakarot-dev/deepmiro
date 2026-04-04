@@ -164,42 +164,69 @@ def generate_ontology():
                 "error": t('api.requireSimulationRequirement')
             }), 400
         
-        # 获取上传的文件
-        uploaded_files = request.files.getlist('files')
-        if not uploaded_files or all(not f.filename for f in uploaded_files):
-            return jsonify({
-                "success": False,
-                "error": t('api.requireFileUpload')
-            }), 400
-        
+        # Check for pre-uploaded document (from /api/documents/upload)
+        document_id = request.form.get('document_id', '')
+
         # 创建项目
         project = ProjectManager.create_project(name=project_name)
         project.simulation_requirement = simulation_requirement
         logger.info(f"创建项目: {project.project_id}")
-        
+
         # 保存文件并提取文本
         document_texts = []
         all_text = ""
-        
-        for file in uploaded_files:
-            if file and file.filename and allowed_file(file.filename):
-                # 保存文件到项目目录
-                file_info = ProjectManager.save_file_to_project(
-                    project.project_id, 
-                    file, 
-                    file.filename
-                )
+
+        if document_id:
+            # Use pre-uploaded, pre-sanitized document text
+            from ..models.document import DocumentManager
+            doc = DocumentManager.get_document(document_id)
+            if not doc:
+                ProjectManager.delete_project(project.project_id)
+                return jsonify({
+                    "success": False,
+                    "error": f"Document not found: {document_id}"
+                }), 404
+            doc_text = DocumentManager.get_document_text(document_id)
+            if doc_text:
+                doc_text = TextProcessor.preprocess_text(doc_text)
+                document_texts.append(doc_text)
+                all_text = f"\n\n=== {doc.original_filename} ===\n{doc_text}"
                 project.files.append({
-                    "filename": file_info["original_filename"],
-                    "size": file_info["size"]
+                    "filename": doc.original_filename,
+                    "size": doc.file_size,
                 })
-                
-                # 提取文本
-                text = FileParser.extract_text(file_info["path"])
-                text = TextProcessor.preprocess_text(text)
-                document_texts.append(text)
-                all_text += f"\n\n=== {file_info['original_filename']} ===\n{text}"
-        
+                logger.info(f"Using pre-uploaded document: {document_id} ({doc.text_length} chars)")
+        else:
+            # 获取上传的文件
+            uploaded_files = request.files.getlist('files')
+            if not uploaded_files or all(not f.filename for f in uploaded_files):
+                # Fall back to using the prompt as document text
+                if simulation_requirement and len(simulation_requirement) > 50:
+                    document_texts.append(simulation_requirement)
+                    all_text = simulation_requirement
+                else:
+                    ProjectManager.delete_project(project.project_id)
+                    return jsonify({
+                        "success": False,
+                        "error": t('api.requireFileUpload')
+                    }), 400
+            else:
+                for file in uploaded_files:
+                    if file and file.filename and allowed_file(file.filename):
+                        file_info = ProjectManager.save_file_to_project(
+                            project.project_id,
+                            file,
+                            file.filename
+                        )
+                        project.files.append({
+                            "filename": file_info["original_filename"],
+                            "size": file_info["size"]
+                        })
+                        text = FileParser.extract_text(file_info["path"])
+                        text = TextProcessor.preprocess_text(text)
+                        document_texts.append(text)
+                        all_text += f"\n\n=== {file_info['original_filename']} ===\n{text}"
+
         if not document_texts:
             ProjectManager.delete_project(project.project_id)
             return jsonify({
