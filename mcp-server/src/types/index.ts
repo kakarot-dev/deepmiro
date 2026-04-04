@@ -5,6 +5,7 @@ export interface MirofishConfig {
   mirofishUrl: string;
   llmApiKey: string;
   mcpApiKey?: string;
+  originSecret?: string;
   transport: "stdio" | "http";
   httpPort: number;
   requestTimeoutMs: number;

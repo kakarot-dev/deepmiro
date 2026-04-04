@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { loadConfig } from "./config.js";
 import { createMcpServer } from "./server.js";
 import { createAuthMiddleware } from "./middleware/auth.js";
-import type { MirofishConfig } from "./types/index.js";
+import type { MirofishConfig, AuthProvider } from "./types/index.js";
 
 async function main() {
   const config = loadConfig();
@@ -26,10 +26,14 @@ async function main() {
   }
 }
 
-async function startHttpTransport(config: MirofishConfig) {
+/**
+ * Start the HTTP transport.
+ * Accepts an optional AuthProvider for hosted mode (injected by deepmiro-hosted).
+ */
+async function startHttpTransport(config: MirofishConfig, authProvider?: AuthProvider) {
   const app = express();
   app.use(express.json()); // CRITICAL FIX: parse JSON bodies
-  const auth = createAuthMiddleware(config.mcpApiKey);
+  const auth = createAuthMiddleware(config.mcpApiKey, authProvider, config.originSecret);
 
   // Each session gets its own McpServer + transport (CRITICAL FIX: no shared server)
   const sessions = new Map<string, { transport: StreamableHTTPServerTransport }>();
@@ -65,7 +69,13 @@ async function startHttpTransport(config: MirofishConfig) {
     }
 
     // Create new server + transport per session (CRITICAL FIX)
-    const { server } = createMcpServer(config);
+    const { server, client } = createMcpServer(config);
+
+    // Propagate user context from auth middleware to backend client
+    if (req.authContext) {
+      client.setUserContext(req.authContext);
+    }
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
@@ -125,6 +135,12 @@ async function startHttpTransport(config: MirofishConfig) {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 }
+
+// Re-export for hosted mode
+export { createMcpServer } from "./server.js";
+export { createAuthMiddleware } from "./middleware/auth.js";
+export { loadConfig } from "./config.js";
+export type { AuthContext, AuthProvider, MirofishConfig } from "./types/index.js";
 
 main().catch((err) => {
   process.stderr.write(`deepmiro fatal: ${err.message}\n`);
