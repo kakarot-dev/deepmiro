@@ -91,7 +91,7 @@ spec:
           {{- toYaml .Values.backend.resources | nindent 10 }}
         volumeMounts:
         - name: uploads
-          mountPath: /app/deepmiro/backend/uploads
+          mountPath: /app/backend/uploads
         livenessProbe:
           httpGet:
             path: /health
