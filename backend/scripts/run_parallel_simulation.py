@@ -1437,7 +1437,21 @@ async def run_reddit_simulation(
         model=model,
         available_actions=REDDIT_ACTIONS,
     )
-    
+
+    # Optimize Reddit agents: reduce output tokens for non-content actions
+    _concise_suffix = (
+        "\n\n# OUTPUT EFFICIENCY\n"
+        "When choosing non-content actions (DO_NOTHING, SEARCH_POSTS, SEARCH_USER, "
+        "TREND, REFRESH, FOLLOW, MUTE, LIKE_POST, DISLIKE_POST, LIKE_COMMENT, "
+        "DISLIKE_COMMENT), respond with ONLY the action JSON. No explanation or reasoning."
+    )
+    _patched = 0
+    for _aid, _agent in result.agent_graph.get_agents():
+        if hasattr(_agent, 'system_message') and hasattr(_agent.system_message, 'content'):
+            _agent.system_message.content += _concise_suffix
+            _patched += 1
+    log_info(f"Patched {_patched} agents with concise output instruction")
+
     # 从配置文件获取 Agent 真实名称映射（使用 entity_name 而非默认的 Agent_X）
     agent_names = get_agent_names_from_config(config)
     # 如果配置中没有某个 agent，则使用 OASIS 的默认名称
