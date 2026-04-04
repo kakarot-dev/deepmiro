@@ -1179,31 +1179,60 @@ async def run_twitter_simulation(
 
     log_info(f"环境已启动 (semaphore={llm_semaphore})")
 
-    # Conditional rec table update — scale interval with agent count
+    # Replace OASIS's TWHIN-BERT rec table with lightweight feed
     agent_count = len(config.get("agent_configs", []))
-    if config.get("rec_update_interval"):
-        rec_update_interval = config["rec_update_interval"]
-    elif agent_count > 50:
-        rec_update_interval = 15
-    elif agent_count > 20:
-        rec_update_interval = 10
-    else:
-        rec_update_interval = 5
+    if hasattr(result.env, 'platform'):
+        _platform = result.env.platform
+        _max_rec = getattr(_platform, 'max_rec_post_len', 20)
 
-    if rec_update_interval > 1 and hasattr(result.env, 'platform'):
-        _original_rec_update = result.env.platform.update_rec_table
-        _rec_rounds_since_update = [0]
+        async def _fast_rec_update():
+            """Lightweight rec table: recent posts + random sampling.
 
-        async def _conditional_rec_update():
-            _rec_rounds_since_update[0] += 1
-            # Always run on first call (bootstrap feed), then every Nth
-            if _rec_rounds_since_update[0] == 1 or _rec_rounds_since_update[0] >= rec_update_interval:
-                await _original_rec_update()
-                if _rec_rounds_since_update[0] >= rec_update_interval:
-                    _rec_rounds_since_update[0] = 0
+            Instead of TWHIN-BERT (200s for 80 agents), this reads
+            recent posts from SQLite and assigns each user a mix of
+            the latest posts plus random older ones.  Takes <100ms.
+            """
+            try:
+                cursor = _platform.db_cursor
+                cursor.execute("SELECT user_id FROM user")
+                users = [r[0] for r in cursor.fetchall()]
 
-        result.env.platform.update_rec_table = _conditional_rec_update
-        log_info(f"Rec table update interval: every {rec_update_interval} rounds ({agent_count} agents)")
+                cursor.execute(
+                    "SELECT post_id FROM post ORDER BY created_at DESC LIMIT ?",
+                    (min(200, _max_rec * 3),),
+                )
+                all_posts = [r[0] for r in cursor.fetchall()]
+
+                if not all_posts:
+                    return
+
+                cursor.execute("DELETE FROM rec")
+
+                insert_values = []
+                for uid in users:
+                    # Each user gets latest posts + some randomization
+                    recent = all_posts[:_max_rec // 2]
+                    pool = all_posts[_max_rec // 2:]
+                    if pool:
+                        sampled = random.sample(pool, min(len(pool), _max_rec - len(recent)))
+                    else:
+                        sampled = []
+                    feed = recent + sampled
+                    for pid in feed[:_max_rec]:
+                        insert_values.append((uid, pid))
+
+                if insert_values:
+                    cursor.executemany(
+                        "INSERT INTO rec (user_id, post_id) VALUES (?, ?)",
+                        insert_values,
+                    )
+                    cursor.connection.commit()
+
+            except Exception as exc:
+                log_info(f"Fast rec update error: {exc}")
+
+        _platform.update_rec_table = _fast_rec_update
+        log_info(f"Fast rec table enabled ({agent_count} agents, max_rec={_max_rec})")
 
     # AVM smart paging — evict all agents to stub state
     twitter_pager = None
@@ -1437,30 +1466,53 @@ async def run_reddit_simulation(
 
     log_info(f"环境已启动 (semaphore={llm_semaphore})")
 
-    # Conditional rec table update — scale interval with agent count
+    # Replace OASIS's rec table with lightweight feed
     agent_count = len(config.get("agent_configs", []))
-    if config.get("rec_update_interval"):
-        rec_update_interval = config["rec_update_interval"]
-    elif agent_count > 50:
-        rec_update_interval = 15
-    elif agent_count > 20:
-        rec_update_interval = 10
-    else:
-        rec_update_interval = 5
+    if hasattr(result.env, 'platform'):
+        _platform = result.env.platform
+        _max_rec = getattr(_platform, 'max_rec_post_len', 20)
 
-    if rec_update_interval > 1 and hasattr(result.env, 'platform'):
-        _original_rec_update = result.env.platform.update_rec_table
-        _rec_rounds_since_update = [0]
+        async def _fast_rec_update():
+            try:
+                cursor = _platform.db_cursor
+                cursor.execute("SELECT user_id FROM user")
+                users = [r[0] for r in cursor.fetchall()]
 
-        async def _conditional_rec_update():
-            _rec_rounds_since_update[0] += 1
-            if _rec_rounds_since_update[0] == 1 or _rec_rounds_since_update[0] >= rec_update_interval:
-                await _original_rec_update()
-                if _rec_rounds_since_update[0] >= rec_update_interval:
-                    _rec_rounds_since_update[0] = 0
+                cursor.execute(
+                    "SELECT post_id FROM post ORDER BY created_at DESC LIMIT ?",
+                    (min(200, _max_rec * 3),),
+                )
+                all_posts = [r[0] for r in cursor.fetchall()]
 
-        result.env.platform.update_rec_table = _conditional_rec_update
-        log_info(f"Rec table update interval: every {rec_update_interval} rounds ({agent_count} agents)")
+                if not all_posts:
+                    return
+
+                cursor.execute("DELETE FROM rec")
+
+                insert_values = []
+                for uid in users:
+                    recent = all_posts[:_max_rec // 2]
+                    pool = all_posts[_max_rec // 2:]
+                    if pool:
+                        sampled = random.sample(pool, min(len(pool), _max_rec - len(recent)))
+                    else:
+                        sampled = []
+                    feed = recent + sampled
+                    for pid in feed[:_max_rec]:
+                        insert_values.append((uid, pid))
+
+                if insert_values:
+                    cursor.executemany(
+                        "INSERT INTO rec (user_id, post_id) VALUES (?, ?)",
+                        insert_values,
+                    )
+                    cursor.connection.commit()
+
+            except Exception as exc:
+                log_info(f"Fast rec update error: {exc}")
+
+        _platform.update_rec_table = _fast_rec_update
+        log_info(f"Fast rec table enabled ({agent_count} agents, max_rec={_max_rec})")
 
     # AVM smart paging — evict all agents to stub state
     reddit_pager = None
