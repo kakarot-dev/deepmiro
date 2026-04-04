@@ -377,6 +377,50 @@ class SurrealDBStorage(GraphStorage):
         logger.info("[add_text] Chunk done: episode=%s", episode_id)
         return episode_id
 
+    def _extract_and_embed(
+        self,
+        graph_id: str,
+        text: str,
+        ontology: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """NER extraction + embedding for a single chunk (thread-safe, no DB writes)."""
+        extraction = self._ner.extract(text, ontology)
+        entities = extraction.get("entities", [])
+        relations = extraction.get("relations", [])
+
+        # Prepare summaries for embedding
+        entity_summaries: List[str] = []
+        for ent in entities:
+            attrs = ent.get("attributes", {})
+            if not isinstance(attrs, dict):
+                attrs = {}
+            summary = attrs.pop("summary", None) or attrs.get("description", None)
+            if summary and len(str(summary)) > 10:
+                entity_summaries.append(str(summary))
+            else:
+                entity_summaries.append(f"{ent['name']} ({ent['type']})")
+
+        fact_texts = [
+            rel.get("fact", f"{rel['source']} {rel['type']} {rel['target']}")
+            for rel in relations
+        ]
+        all_texts = entity_summaries + fact_texts
+        all_embeddings: List[List[float]] = []
+        if all_texts:
+            try:
+                all_embeddings = self._embedding.embed_batch(all_texts)
+            except Exception:
+                all_embeddings = [[] for _ in all_texts]
+
+        return {
+            "text": text,
+            "entities": entities,
+            "relations": relations,
+            "entity_summaries": entity_summaries,
+            "entity_embeddings": all_embeddings[: len(entities)],
+            "relation_embeddings": all_embeddings[len(entities):],
+        }
+
     def add_text_batch(
         self,
         graph_id: str,
@@ -384,17 +428,150 @@ class SurrealDBStorage(GraphStorage):
         batch_size: int = 3,
         progress_callback: Optional[Callable] = None,
     ) -> List[str]:
-        """Batch-add text chunks with progress reporting."""
-        episode_ids: List[str] = []
+        """Batch-add text chunks with parallel NER + embedding.
+
+        NER and embedding calls run in parallel (5 concurrent) since
+        they're independent per chunk and thread-safe.  DB writes run
+        sequentially after all extractions complete.
+        """
+        import concurrent.futures
+
+        chunks = [c for c in chunks if c and c.strip()]
         total = len(chunks)
-        for i, chunk in enumerate(chunks):
-            if not chunk or not chunk.strip():
-                continue
-            episode_id = self.add_text(graph_id, chunk)
+        if total == 0:
+            return []
+
+        ontology = self.get_ontology(graph_id)
+        max_workers = min(5, total)
+
+        # Phase 1: Parallel NER + embedding
+        logger.info(
+            "[add_text_batch] Parallel NER+embed: %d chunks, %d workers",
+            total, max_workers,
+        )
+        results: List[Dict[str, Any]] = [None] * total  # type: ignore
+        completed = [0]
+
+        def process_chunk(idx: int, chunk: str) -> tuple:
+            result = self._extract_and_embed(graph_id, chunk, ontology)
+            completed[0] += 1
+            logger.info(
+                "[add_text_batch] NER+embed %d/%d: %d entities, %d relations",
+                completed[0], total,
+                len(result["entities"]), len(result["relations"]),
+            )
+            return idx, result
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(process_chunk, i, chunk): i
+                for i, chunk in enumerate(chunks)
+            }
+            for future in concurrent.futures.as_completed(futures):
+                idx, result = future.result()
+                results[idx] = result
+                if progress_callback:
+                    progress_callback(completed[0] / total * 0.7)  # 70% for NER+embed
+
+        # Phase 2: Sequential DB writes
+        logger.info("[add_text_batch] Writing %d chunks to SurrealDB...", total)
+        episode_ids: List[str] = []
+        for i, result in enumerate(results):
+            episode_id = str(_uuid.uuid4())
+
+            # Create episode
+            self._query(
+                """
+                CREATE episode CONTENT {
+                    graph_id: $graph_id,
+                    data: $data,
+                    processed: true,
+                    created_at: time::now()
+                };
+                """,
+                {"graph_id": graph_id, "data": result["text"]},
+            )
+
+            # Upsert entities
+            for idx, ent in enumerate(result["entities"]):
+                embedding = result["entity_embeddings"][idx] if idx < len(result["entity_embeddings"]) else []
+                attrs_json = json.dumps(ent.get("attributes", {}), ensure_ascii=False)
+                self._query(
+                    """
+                    UPSERT entity SET
+                        graph_id = $gid,
+                        name = $name,
+                        name_lower = $name_lower,
+                        entity_type = $entity_type,
+                        summary = IF summary = "" OR summary = NONE
+                            THEN $summary
+                            ELSE summary
+                        END,
+                        attributes_json = $attrs_json,
+                        embedding = $embedding,
+                        created_at = IF created_at = NONE
+                            THEN time::now()
+                            ELSE created_at
+                        END
+                    WHERE graph_id = $gid AND name_lower = $name_lower;
+                    """,
+                    {
+                        "gid": graph_id,
+                        "name": ent["name"],
+                        "name_lower": ent["name"].lower(),
+                        "entity_type": ent.get("type", "Entity"),
+                        "summary": result["entity_summaries"][idx],
+                        "attrs_json": attrs_json,
+                        "embedding": embedding,
+                    },
+                )
+
+            # Create relations
+            for idx, rel in enumerate(result["relations"]):
+                fact_embedding = (
+                    result["relation_embeddings"][idx]
+                    if idx < len(result["relation_embeddings"])
+                    else []
+                )
+                self._query(
+                    """
+                    LET $src = (SELECT VALUE id FROM entity
+                                WHERE graph_id = $gid
+                                AND name_lower = $source_lower
+                                LIMIT 1);
+                    LET $tgt = (SELECT VALUE id FROM entity
+                                WHERE graph_id = $gid
+                                AND name_lower = $target_lower
+                                LIMIT 1);
+
+                    IF array::len($src) > 0 AND array::len($tgt) > 0 {
+                        RELATE $src -> relation -> $tgt SET
+                            graph_id = $gid,
+                            name = $rel_name,
+                            fact = $fact,
+                            fact_embedding = $fact_embedding,
+                            attributes_json = "{}",
+                            episode_ids = [$episode_id],
+                            weight = 1.0,
+                            created_at = time::now();
+                    };
+                    """,
+                    {
+                        "gid": graph_id,
+                        "source_lower": rel["source"].lower(),
+                        "target_lower": rel["target"].lower(),
+                        "rel_name": rel["type"],
+                        "fact": rel.get("fact", f"{rel['source']} {rel['type']} {rel['target']}"),
+                        "fact_embedding": fact_embedding,
+                        "episode_id": episode_id,
+                    },
+                )
+
             episode_ids.append(episode_id)
             if progress_callback:
-                progress_callback((i + 1) / total)
-            logger.info("Processed chunk %d/%d", i + 1, total)
+                progress_callback(0.7 + (i + 1) / total * 0.3)  # 70-100% for DB writes
+            logger.info("[add_text_batch] Written chunk %d/%d", i + 1, total)
+
         return episode_ids
 
     def wait_for_processing(
