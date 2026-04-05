@@ -20,6 +20,8 @@ spec:
             name: {{ include "mirofish.fullname" . }}-mcp
             port:
               number: {{ .Values.mcp.port }}
+      {{- if not .Values.hosted.enabled }}
+      # Self-hosted: backend exposed directly
       - path: /api
         pathType: Prefix
         backend:
@@ -27,6 +29,7 @@ spec:
             name: {{ include "mirofish.fullname" . }}-backend
             port:
               number: {{ .Values.backend.port }}
+      {{- end }}
       - path: /health
         pathType: Exact
         backend:

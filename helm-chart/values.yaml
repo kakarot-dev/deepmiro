@@ -33,6 +33,11 @@ surrealdb:
       memory: "2Gi"
       cpu: "1000m"
 
+# Set hosted.enabled=true when using deepmiro-hosted overlay (auth, billing, edge)
+# When enabled, /api traffic routes through the hosted pod instead of directly to backend
+hosted:
+  enabled: false
+
 ingress:
   enabled: true
   host: deepmiro.org
