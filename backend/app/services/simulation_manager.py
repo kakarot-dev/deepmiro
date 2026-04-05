@@ -170,15 +170,22 @@ class SimulationManager:
 
         self._simulations[state.simulation_id] = state
 
-        # SurrealDB write (best-effort)
-        storage = _get_surreal_storage()
-        if storage:
-            try:
+        # SurrealDB write (best-effort, thread-safe)
+        import threading
+        try:
+            if threading.current_thread() is threading.main_thread():
+                storage = _get_surreal_storage()
+            else:
+                # Background thread: create a fresh connection (WebSocket not thread-safe)
+                from ..storage.surrealdb_backend import SurrealDBStorage
+                storage = SurrealDBStorage()
+
+            if storage:
                 sim_data = state.to_dict()
                 sim_data["config_json"] = sim_data.get("config_json", "{}")
                 storage.upsert_simulation(state.simulation_id, sim_data)
-            except Exception as exc:
-                logger.warning("SurrealDB simulation save failed: %s", exc)
+        except Exception as exc:
+            logger.warning("SurrealDB simulation save failed: %s", exc)
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
         """从 SurrealDB 或文件加载模拟状态"""
