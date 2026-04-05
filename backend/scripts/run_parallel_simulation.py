@@ -1240,12 +1240,19 @@ async def run_twitter_simulation(
                         if new_posts:
                             contents = [p[1] for p in new_posts]
                             embeddings = _embedding_svc.embed_batch(contents)
+                            # Batch insert all new posts in one SurrealDB call
+                            batch_inserts = []
+                            batch_params = {}
                             for idx, (post_id, content) in enumerate(new_posts):
                                 if idx < len(embeddings):
-                                    _vec_db.query(
-                                        "CREATE post SET post_id = $pid, content = $c, embedding = $emb",
-                                        {"pid": post_id, "c": content[:500], "emb": embeddings[idx]},
+                                    batch_inserts.append(
+                                        f"CREATE post SET post_id = $pid_{idx}, content = $c_{idx}, embedding = $emb_{idx}"
                                     )
+                                    batch_params[f"pid_{idx}"] = post_id
+                                    batch_params[f"c_{idx}"] = content[:500]
+                                    batch_params[f"emb_{idx}"] = embeddings[idx]
+                            if batch_inserts:
+                                _vec_db.query("; ".join(batch_inserts), batch_params)
                             _last_embedded_post_id[0] = new_posts[-1][0]
                     except Exception as exc:
                         log_info(f"Post embedding error: {exc}")
@@ -1633,12 +1640,18 @@ async def run_reddit_simulation(
                         if new_posts:
                             contents = [p[1] for p in new_posts]
                             embeddings = _embedding_svc_r.embed_batch(contents)
+                            batch_inserts = []
+                            batch_params = {}
                             for idx, (post_id, content) in enumerate(new_posts):
                                 if idx < len(embeddings):
-                                    _vec_db_r.query(
-                                        "CREATE post SET post_id = $pid, content = $c, embedding = $emb",
-                                        {"pid": post_id, "c": content[:500], "emb": embeddings[idx]},
+                                    batch_inserts.append(
+                                        f"CREATE post SET post_id = $pid_{idx}, content = $c_{idx}, embedding = $emb_{idx}"
                                     )
+                                    batch_params[f"pid_{idx}"] = post_id
+                                    batch_params[f"c_{idx}"] = content[:500]
+                                    batch_params[f"emb_{idx}"] = embeddings[idx]
+                            if batch_inserts:
+                                _vec_db_r.query("; ".join(batch_inserts), batch_params)
                             _last_embedded_post_id_r[0] = new_posts[-1][0]
                     except Exception as exc:
                         log_info(f"Reddit post embedding error: {exc}")
