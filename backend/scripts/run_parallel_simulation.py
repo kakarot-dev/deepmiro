@@ -77,8 +77,6 @@ import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
-import numpy as np
-
 
 # 全局变量：用于信号处理
 _shutdown_event = None
@@ -186,37 +184,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-# ── Cached TWHIN-BERT singleton ──────────────────────────────────
-_twhin_model = None
-_twhin_tokenizer = None
-
-
-def _get_twhin_bert():
-    """Lazy-load TWHIN-BERT model and tokenizer (singleton, ~2s first call)."""
-    global _twhin_model, _twhin_tokenizer
-    if _twhin_model is None:
-        import torch
-        from transformers import AutoModel, AutoTokenizer
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _twhin_tokenizer = AutoTokenizer.from_pretrained(
-            "Twitter/twhin-bert-base", model_max_length=512
-        )
-        _twhin_model = AutoModel.from_pretrained(
-            "Twitter/twhin-bert-base"
-        ).to(device).eval()
-    return _twhin_model, _twhin_tokenizer
-
-
-def _twhin_embed(texts: list) -> np.ndarray:
-    """Embed texts with TWHIN-BERT. Returns (N, 768) float32 numpy array."""
-    import torch
-    model, tokenizer = _get_twhin_bert()
-    device = next(model.parameters()).device
-    with torch.no_grad():
-        inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        outputs = model(**inputs)
-    return outputs.pooler_output.cpu().numpy()
+from twhin_rec import create_twhin_rec_updater
 
 
 # Twitter可用动作（不包含INTERVIEW，INTERVIEW只能通过ManualAction手动触发）
@@ -1215,82 +1183,10 @@ async def run_twitter_simulation(
     log_info(f"环境已启动 (semaphore={llm_semaphore})")
 
     # ── Cached TWHIN-BERT rec system (Twitter) ────────────────────
-    _last_embedded_post_id_tw = [0]
-    _user_embeddings_tw = [None]
-    _post_embeddings_tw = [None]
-    _post_ids_tw = []
-    _user_ids_tw = []
-
     if hasattr(result.env, 'platform'):
-        _platform = result.env.platform
-        _max_rec = getattr(_platform, 'max_rec_post_len', 20)
-
-        async def _twhin_rec_update():
-            """Cached TWHIN-BERT: embed users once, new posts incrementally, numpy similarity."""
-            try:
-                cursor = _platform.db_cursor
-
-                # 1. One-time: embed all user bios
-                if _user_embeddings_tw[0] is None:
-                    cursor.execute("SELECT user_id, bio FROM user ORDER BY user_id")
-                    rows = cursor.fetchall()
-                    _user_ids_tw.clear()
-                    bios = []
-                    for uid, bio in rows:
-                        _user_ids_tw.append(uid)
-                        bios.append(bio if bio else "user")
-                    if bios:
-                        _user_embeddings_tw[0] = _twhin_embed(bios)
-                        log_info(f"TWHIN rec: embedded {len(bios)} users")
-
-                # 2. Embed only new posts
-                cursor.execute(
-                    "SELECT post_id, content FROM post WHERE post_id > ? ORDER BY post_id",
-                    (_last_embedded_post_id_tw[0],),
-                )
-                new_posts = [(pid, c) for pid, c in cursor.fetchall() if c]
-                if new_posts:
-                    new_ids = [p[0] for p in new_posts]
-                    new_vecs = _twhin_embed([p[1] for p in new_posts])
-                    _post_ids_tw.extend(new_ids)
-                    if _post_embeddings_tw[0] is None:
-                        _post_embeddings_tw[0] = new_vecs
-                    else:
-                        _post_embeddings_tw[0] = np.vstack([_post_embeddings_tw[0], new_vecs])
-                    _last_embedded_post_id_tw[0] = new_ids[-1]
-
-                # 3. Compute similarity & build rec table
-                cursor.execute("DELETE FROM rec")
-                insert_values = []
-
-                u = _user_embeddings_tw[0]
-                p = _post_embeddings_tw[0]
-                if u is not None and p is not None and len(p) > 0 and len(u) > 0:
-                    u_norm = u / (np.linalg.norm(u, axis=1, keepdims=True) + 1e-8)
-                    p_norm = p / (np.linalg.norm(p, axis=1, keepdims=True) + 1e-8)
-                    sim = u_norm @ p_norm.T
-                    k = min(_max_rec, sim.shape[1])
-                    top_k = np.argpartition(-sim, k, axis=1)[:, :k]
-                    for i, uid in enumerate(_user_ids_tw):
-                        for j in top_k[i]:
-                            insert_values.append((uid, _post_ids_tw[j]))
-
-                if not insert_values:
-                    cursor.execute("SELECT post_id FROM post ORDER BY created_at DESC LIMIT ?", (min(200, _max_rec * 3),))
-                    all_posts = [r[0] for r in cursor.fetchall()]
-                    if all_posts:
-                        cursor.execute("SELECT user_id FROM user")
-                        for uid, in cursor.fetchall():
-                            for pid in all_posts[:_max_rec]:
-                                insert_values.append((uid, pid))
-
-                if insert_values:
-                    cursor.executemany("INSERT INTO rec (user_id, post_id) VALUES (?, ?)", insert_values)
-                    cursor.connection.commit()
-            except Exception as exc:
-                log_info(f"TWHIN rec error: {exc}")
-
-        _platform.update_rec_table = _twhin_rec_update
+        result.env.platform.update_rec_table = create_twhin_rec_updater(
+            result.env.platform, log_info,
+        )
         log_info("TWHIN-BERT cached rec enabled")
 
     # AVM smart paging — evict all agents to stub state
@@ -1540,79 +1436,10 @@ async def run_reddit_simulation(
     log_info(f"环境已启动 (semaphore={llm_semaphore})")
 
     # ── Cached TWHIN-BERT rec system (Reddit) ──────────────────────
-    _last_embedded_post_id_rd = [0]
-    _user_embeddings_rd = [None]
-    _post_embeddings_rd = [None]
-    _post_ids_rd = []
-    _user_ids_rd = []
-
     if hasattr(result.env, 'platform'):
-        _platform = result.env.platform
-        _max_rec = getattr(_platform, 'max_rec_post_len', 20)
-
-        async def _twhin_rec_update_reddit():
-            """Cached TWHIN-BERT rec (Reddit)."""
-            try:
-                cursor = _platform.db_cursor
-
-                if _user_embeddings_rd[0] is None:
-                    cursor.execute("SELECT user_id, bio FROM user ORDER BY user_id")
-                    rows = cursor.fetchall()
-                    _user_ids_rd.clear()
-                    bios = []
-                    for uid, bio in rows:
-                        _user_ids_rd.append(uid)
-                        bios.append(bio if bio else "user")
-                    if bios:
-                        _user_embeddings_rd[0] = _twhin_embed(bios)
-                        log_info(f"TWHIN rec: embedded {len(bios)} Reddit users")
-
-                cursor.execute(
-                    "SELECT post_id, content FROM post WHERE post_id > ? ORDER BY post_id",
-                    (_last_embedded_post_id_rd[0],),
-                )
-                new_posts = [(pid, c) for pid, c in cursor.fetchall() if c]
-                if new_posts:
-                    new_ids = [p[0] for p in new_posts]
-                    new_vecs = _twhin_embed([p[1] for p in new_posts])
-                    _post_ids_rd.extend(new_ids)
-                    if _post_embeddings_rd[0] is None:
-                        _post_embeddings_rd[0] = new_vecs
-                    else:
-                        _post_embeddings_rd[0] = np.vstack([_post_embeddings_rd[0], new_vecs])
-                    _last_embedded_post_id_rd[0] = new_ids[-1]
-
-                cursor.execute("DELETE FROM rec")
-                insert_values = []
-
-                u = _user_embeddings_rd[0]
-                p = _post_embeddings_rd[0]
-                if u is not None and p is not None and len(p) > 0 and len(u) > 0:
-                    u_norm = u / (np.linalg.norm(u, axis=1, keepdims=True) + 1e-8)
-                    p_norm = p / (np.linalg.norm(p, axis=1, keepdims=True) + 1e-8)
-                    sim = u_norm @ p_norm.T
-                    k = min(_max_rec, sim.shape[1])
-                    top_k = np.argpartition(-sim, k, axis=1)[:, :k]
-                    for i, uid in enumerate(_user_ids_rd):
-                        for j in top_k[i]:
-                            insert_values.append((uid, _post_ids_rd[j]))
-
-                if not insert_values:
-                    cursor.execute("SELECT post_id FROM post ORDER BY created_at DESC LIMIT ?", (min(200, _max_rec * 3),))
-                    all_posts = [r[0] for r in cursor.fetchall()]
-                    if all_posts:
-                        cursor.execute("SELECT user_id FROM user")
-                        for uid, in cursor.fetchall():
-                            for pid in all_posts[:_max_rec]:
-                                insert_values.append((uid, pid))
-
-                if insert_values:
-                    cursor.executemany("INSERT INTO rec (user_id, post_id) VALUES (?, ?)", insert_values)
-                    cursor.connection.commit()
-            except Exception as exc:
-                log_info(f"Reddit TWHIN rec error: {exc}")
-
-        _platform.update_rec_table = _twhin_rec_update_reddit
+        result.env.platform.update_rec_table = create_twhin_rec_updater(
+            result.env.platform, log_info, suffix=" Reddit",
+        )
         log_info("TWHIN-BERT cached rec enabled (Reddit)")
 
     # AVM smart paging — evict all agents to stub state
