@@ -172,22 +172,32 @@ class SimulationManager:
 
         # SurrealDB write (best-effort, thread-safe)
         import threading
+        is_main = threading.current_thread() is threading.main_thread()
+        logger.info(
+            "SurrealDB save: sim=%s status=%s config=%s entities=%s thread=%s",
+            state.simulation_id, state.status.value, state.config_generated,
+            state.entities_count, "main" if is_main else "bg",
+        )
         try:
-            if threading.current_thread() is threading.main_thread():
+            if is_main:
                 storage = _get_surreal_storage()
             else:
-                # Background thread: use HTTP (stateless, thread-safe) instead of WebSocket
                 from ..storage.surrealdb_backend import SurrealDBStorage
                 from ..config import Config
                 http_url = Config.SURREAL_URL.replace("ws://", "http://").replace("wss://", "https://")
+                logger.info("SurrealDB bg: connecting via HTTP to %s", http_url)
                 storage = SurrealDBStorage(url=http_url)
+                logger.info("SurrealDB bg: connected OK")
 
             if storage:
                 sim_data = state.to_dict()
                 sim_data["config_json"] = sim_data.get("config_json", "{}")
                 storage.upsert_simulation(state.simulation_id, sim_data)
+                logger.info("SurrealDB save: SUCCESS for %s (status=%s)", state.simulation_id, state.status.value)
+            else:
+                logger.warning("SurrealDB save: no storage available")
         except Exception as exc:
-            logger.warning("SurrealDB simulation save failed: %s", exc)
+            logger.warning("SurrealDB save FAILED: %s: %s", type(exc).__name__, exc)
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
         """从 SurrealDB 或文件加载模拟状态"""
