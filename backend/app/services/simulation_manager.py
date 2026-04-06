@@ -173,6 +173,7 @@ class SimulationManager:
         # SurrealDB write (best-effort, thread-safe)
         import threading
         is_main = threading.current_thread() is threading.main_thread()
+        print(f"[SURREAL_SAVE] sim={state.simulation_id} status={state.status.value} config={state.config_generated} entities={state.entities_count} thread={'main' if is_main else 'bg'}", flush=True)
         logger.info(
             "SurrealDB save: sim=%s status=%s config=%s entities=%s thread=%s",
             state.simulation_id, state.status.value, state.config_generated,
@@ -185,19 +186,19 @@ class SimulationManager:
                 from ..storage.surrealdb_backend import SurrealDBStorage
                 from ..config import Config
                 http_url = Config.SURREAL_URL.replace("ws://", "http://").replace("wss://", "https://")
-                logger.info("SurrealDB bg: connecting via HTTP to %s", http_url)
+                print(f"[SURREAL_SAVE] bg: connecting HTTP to {http_url}", flush=True)
                 storage = SurrealDBStorage(url=http_url)
-                logger.info("SurrealDB bg: connected OK")
+                print("[SURREAL_SAVE] bg: connected OK", flush=True)
 
             if storage:
                 sim_data = state.to_dict()
                 sim_data["config_json"] = sim_data.get("config_json", "{}")
                 storage.upsert_simulation(state.simulation_id, sim_data)
-                logger.info("SurrealDB save: SUCCESS for %s (status=%s)", state.simulation_id, state.status.value)
+                print(f"[SURREAL_SAVE] SUCCESS: {state.simulation_id} status={state.status.value}", flush=True)
             else:
-                logger.warning("SurrealDB save: no storage available")
+                print("[SURREAL_SAVE] no storage available", flush=True)
         except Exception as exc:
-            logger.warning("SurrealDB save FAILED: %s: %s", type(exc).__name__, exc)
+            print(f"[SURREAL_SAVE] FAILED: {type(exc).__name__}: {exc}", flush=True)
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
         """从 SurrealDB 或文件加载模拟状态"""
