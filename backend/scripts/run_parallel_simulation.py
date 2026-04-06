@@ -1208,14 +1208,28 @@ async def run_twitter_simulation(
             _vec_db.query("DEFINE INDEX idx_pid ON post FIELDS post_id UNIQUE")
             _vec_db.query("DEFINE INDEX idx_vec ON post FIELDS embedding HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12")
 
-            # Load agent persona embeddings once
+            # Copy agent persona embeddings into per-sim DB (avoids sending them over wire each round)
+            _vec_db.query("DEFINE TABLE agent SCHEMAFULL")
+            _vec_db.query("DEFINE FIELD agent_id ON agent TYPE int")
+            _vec_db.query("DEFINE FIELD embedding ON agent TYPE array<float> DEFAULT []")
+            _vec_db.query("DEFINE INDEX idx_aid ON agent FIELDS agent_id UNIQUE")
+
             rows = _main_storage._rows(_main_storage._query(
                 "SELECT agent_id, persona_embedding FROM agent WHERE simulation_id = $sid AND array::len(persona_embedding) > 0",
                 {"sid": _sim_id},
             ))
+            # Batch insert all agent embeddings in one call
+            agent_inserts = []
+            agent_params = {}
             for r in rows:
-                _agent_embeddings[r["agent_id"]] = r["persona_embedding"]
-            log_info(f"Vector feed: loaded {len(_agent_embeddings)} agent embeddings")
+                aid = r["agent_id"]
+                _agent_embeddings[aid] = True  # just track which agents have embeddings
+                agent_inserts.append(f"CREATE agent SET agent_id = $a_{aid}, embedding = $e_{aid}")
+                agent_params[f"a_{aid}"] = aid
+                agent_params[f"e_{aid}"] = r["persona_embedding"]
+            if agent_inserts:
+                _vec_db.query("; ".join(agent_inserts), agent_params)
+            log_info(f"Vector feed: copied {len(agent_inserts)} agent embeddings to per-sim DB")
         except Exception as exc:
             log_info(f"Vector feed setup failed: {exc}")
             _vec_db = None
@@ -1225,7 +1239,7 @@ async def run_twitter_simulation(
         _max_rec = getattr(_platform, 'max_rec_post_len', 20)
 
         async def _vector_rec_update():
-            """Per-sim database HNSW vector feed with batched queries."""
+            """Per-sim database HNSW vector feed — zero embedding data over wire per round."""
             try:
                 cursor = _platform.db_cursor
 
@@ -1240,7 +1254,6 @@ async def run_twitter_simulation(
                         if new_posts:
                             contents = [p[1] for p in new_posts]
                             embeddings = _embedding_svc.embed_batch(contents)
-                            # Batch insert all new posts in one SurrealDB call
                             batch_inserts = []
                             batch_params = {}
                             for idx, (post_id, content) in enumerate(new_posts):
@@ -1257,35 +1270,29 @@ async def run_twitter_simulation(
                     except Exception as exc:
                         log_info(f"Post embedding error: {exc}")
 
-                # 2. Build personalized feed — batched HNSW queries
+                # 2. Build personalized feed — HNSW queries referencing stored embeddings
                 cursor.execute("SELECT user_id FROM user")
                 users = [r[0] for r in cursor.fetchall()]
                 cursor.execute("DELETE FROM rec")
                 insert_values = []
 
                 if _vec_db and _last_embedded_post_id[0] > 0 and _agent_embeddings:
-                    # Build batch query: one HNSW lookup per agent, all in one call
+                    # Build batch query: each HNSW lookup reads its embedding from the agent table
+                    # No embedding data sent over wire — SurrealDB reads it internally
                     batch_parts = []
                     batch_users = []
                     for uid in users:
-                        emb = _agent_embeddings.get(uid)
-                        if emb:
+                        if _agent_embeddings.get(uid):
                             batch_parts.append(
-                                "SELECT post_id, vector::distance::knn() AS dist FROM post WHERE embedding <|"
-                                + str(_max_rec) + ",40|> $emb_" + str(uid)
+                                "SELECT post_id, vector::distance::knn() AS dist FROM post "
+                                "WHERE embedding <|" + str(_max_rec) + ",40|> "
+                                "(SELECT VALUE embedding FROM agent WHERE agent_id = " + str(uid) + " LIMIT 1)[0]"
                             )
                             batch_users.append(uid)
 
                     if batch_parts:
-                        # Execute all HNSW queries in one network call
-                        batch_query = "; ".join(batch_parts)
-                        params = {}
-                        for uid in batch_users:
-                            params["emb_" + str(uid)] = _agent_embeddings[uid]
-
                         try:
-                            results = _vec_db.query(batch_query, params)
-                            # results is a list of result sets, one per query
+                            results = _vec_db.query("; ".join(batch_parts))
                             if isinstance(results, list) and len(results) == len(batch_users):
                                 for i, uid in enumerate(batch_users):
                                     rows = results[i] if isinstance(results[i], list) else [results[i]]
@@ -1293,14 +1300,11 @@ async def run_twitter_simulation(
                                         pid = r.get("post_id") if isinstance(r, dict) else None
                                         if pid is not None:
                                             insert_values.append((uid, pid))
-                            else:
-                                # Single result or unexpected format — parse all rows
-                                if isinstance(results, list):
-                                    for r in results:
-                                        if isinstance(r, dict) and r.get("post_id") is not None:
-                                            # Can't determine which user, give to all
-                                            for uid in users:
-                                                insert_values.append((uid, r["post_id"]))
+                            elif isinstance(results, list):
+                                for r in results:
+                                    if isinstance(r, dict) and r.get("post_id") is not None:
+                                        for uid in users:
+                                            insert_values.append((uid, r["post_id"]))
                         except Exception as exc:
                             log_info(f"Batch HNSW error: {exc}")
 
@@ -1611,13 +1615,27 @@ async def run_reddit_simulation(
             _vec_db_r.query("DEFINE INDEX idx_pid ON post FIELDS post_id UNIQUE")
             _vec_db_r.query("DEFINE INDEX idx_vec ON post FIELDS embedding HNSW DIMENSION 768 DIST COSINE TYPE F32 EFC 150 M 12")
 
+            # Copy agent persona embeddings into per-sim DB
+            _vec_db_r.query("DEFINE TABLE agent SCHEMAFULL")
+            _vec_db_r.query("DEFINE FIELD agent_id ON agent TYPE int")
+            _vec_db_r.query("DEFINE FIELD embedding ON agent TYPE array<float> DEFAULT []")
+            _vec_db_r.query("DEFINE INDEX idx_aid ON agent FIELDS agent_id UNIQUE")
+
             rows = _main_storage_r._rows(_main_storage_r._query(
                 "SELECT agent_id, persona_embedding FROM agent WHERE simulation_id = $sid AND array::len(persona_embedding) > 0",
                 {"sid": _sim_id_r},
             ))
+            agent_inserts = []
+            agent_params = {}
             for r in rows:
-                _agent_embeddings_r[r["agent_id"]] = r["persona_embedding"]
-            log_info(f"Vector feed: loaded {len(_agent_embeddings_r)} agent embeddings")
+                aid = r["agent_id"]
+                _agent_embeddings_r[aid] = True
+                agent_inserts.append(f"CREATE agent SET agent_id = $a_{aid}, embedding = $e_{aid}")
+                agent_params[f"a_{aid}"] = aid
+                agent_params[f"e_{aid}"] = r["persona_embedding"]
+            if agent_inserts:
+                _vec_db_r.query("; ".join(agent_inserts), agent_params)
+            log_info(f"Vector feed: copied {len(agent_inserts)} agent embeddings to per-sim DB")
         except Exception as exc:
             log_info(f"Vector feed setup failed: {exc}")
             _vec_db_r = None
@@ -1665,22 +1683,17 @@ async def run_reddit_simulation(
                     batch_parts = []
                     batch_users = []
                     for uid in users:
-                        emb = _agent_embeddings_r.get(uid)
-                        if emb:
+                        if _agent_embeddings_r.get(uid):
                             batch_parts.append(
-                                "SELECT post_id, vector::distance::knn() AS dist FROM post WHERE embedding <|"
-                                + str(_max_rec) + ",40|> $emb_" + str(uid)
+                                "SELECT post_id, vector::distance::knn() AS dist FROM post "
+                                "WHERE embedding <|" + str(_max_rec) + ",40|> "
+                                "(SELECT VALUE embedding FROM agent WHERE agent_id = " + str(uid) + " LIMIT 1)[0]"
                             )
                             batch_users.append(uid)
 
                     if batch_parts:
-                        batch_query = "; ".join(batch_parts)
-                        params = {}
-                        for uid in batch_users:
-                            params["emb_" + str(uid)] = _agent_embeddings_r[uid]
-
                         try:
-                            results = _vec_db_r.query(batch_query, params)
+                            results = _vec_db_r.query("; ".join(batch_parts))
                             if isinstance(results, list) and len(results) == len(batch_users):
                                 for i, uid in enumerate(batch_users):
                                     rows = results[i] if isinstance(results[i], list) else [results[i]]
@@ -1688,12 +1701,11 @@ async def run_reddit_simulation(
                                         pid = r.get("post_id") if isinstance(r, dict) else None
                                         if pid is not None:
                                             insert_values.append((uid, pid))
-                            else:
-                                if isinstance(results, list):
-                                    for r in results:
-                                        if isinstance(r, dict) and r.get("post_id") is not None:
-                                            for uid in users:
-                                                insert_values.append((uid, r["post_id"]))
+                            elif isinstance(results, list):
+                                for r in results:
+                                    if isinstance(r, dict) and r.get("post_id") is not None:
+                                        for uid in users:
+                                            insert_values.append((uid, r["post_id"]))
                         except Exception as exc:
                             log_info(f"Reddit batch HNSW error: {exc}")
 
