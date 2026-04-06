@@ -8,13 +8,28 @@ argument-hint: [scenario] [optional-file-path]
 
 Run a multi-agent swarm simulation to predict how online communities react to a scenario. Agents with distinct personas (students, journalists, officials, alumni) interact on simulated Twitter and Reddit, producing realistic social media dynamics.
 
-## Setup Check
+## Setup Check (MUST run before anything else)
 
-Before running, verify the DeepMiro MCP tools are available by checking if `create_simulation` exists. If it fails with an auth error:
+Before doing ANY work, call `list_simulations` with `limit: 1` as a connectivity test.
 
-> "DeepMiro isn't connected yet. Two options:
-> 1. **Hosted** (recommended): Get an API key at https://deepmiro.org, then set `DEEPMIRO_API_KEY` in your environment
-> 2. **Self-hosted**: Run `docker compose up` from the deepmiro repo and update the plugin's `.mcp.json` to point to your local instance"
+**If it succeeds** (returns a list, even empty): connection is valid, proceed to workflow.
+
+**If it fails with auth/401 error:**
+> "DeepMiro needs an API key to connect. Two options:
+> 1. **Hosted** (recommended): Sign up at https://deepmiro.org → get your API key → then run:
+>    `export DEEPMIRO_API_KEY=dm_your_key_here`
+>    and restart Claude Code.
+> 2. **Self-hosted**: Run `docker compose up` from the deepmiro repo and update the plugin's `.mcp.json` URL to `http://localhost:3001/mcp` (no auth needed)."
+
+**Stop here if auth fails.** Do not proceed with the workflow.
+
+**If it fails with connection error** (not auth):
+> "Can't reach the DeepMiro server. Check that:
+> - Your API key is valid (`DEEPMIRO_API_KEY` environment variable)
+> - The server is running (if self-hosted: `docker compose up`)
+> - Your network can reach deepmiro.org"
+
+**Stop here if connection fails.**
 
 ## Arguments
 
