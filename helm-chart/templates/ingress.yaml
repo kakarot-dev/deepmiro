@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mirofish.fullname" . }}
+  labels:
+    {{- include "mirofish.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+  - host: {{ .Values.ingress.host }}
+    http:
+      paths:
+      - path: /mcp
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ include "mirofish.fullname" . }}-mcp
+            port:
+              number: {{ .Values.mcp.port }}
+      {{- if not .Values.hosted.enabled }}
+      # Self-hosted: backend exposed directly
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ include "mirofish.fullname" . }}-backend
+            port:
+              number: {{ .Values.backend.port }}
+      {{- end }}
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: {{ include "mirofish.fullname" . }}-mcp
+            port:
+              number: {{ .Values.mcp.port }}
+{{- end }}

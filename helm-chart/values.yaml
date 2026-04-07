@@ -1,0 +1,57 @@
+backend:
+  image: ghcr.io/kakarot-dev/deepmiro-backend:v0.4.2
+  imagePullPolicy: Always
+  port: 5001
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "3000m"
+
+mcp:
+  image: ghcr.io/kakarot-dev/deepmiro-mcp:latest
+  port: 3001
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+surrealdb:
+  image: surrealdb/surrealdb:latest
+  port: 8000
+  storage: 20Gi
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+# Set hosted.enabled=true when using deepmiro-hosted overlay (auth, billing, edge)
+# When enabled, /api traffic routes through the hosted pod instead of directly to backend
+hosted:
+  enabled: false
+
+ingress:
+  enabled: true
+  host: deepmiro.org
+  className: traefik
+
+llm:
+  baseUrl: "https://api.fireworks.ai/inference/v1"
+  modelName: "accounts/fireworks/models/minimax-m2p5"
+  boostModelName: "accounts/fireworks/models/gpt-oss-120b"
+
+embedding:
+  baseUrl: "https://api.fireworks.ai/inference"
+  model: "nomic-ai/nomic-embed-text-v1.5"
+  dimensions: 768
+
+uploads:
+  storage: 20Gi

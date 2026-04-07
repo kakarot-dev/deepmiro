@@ -1,0 +1,72 @@
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    container_name: deepmiro-surreal
+    command: start --user root --pass ${SURREAL_PASSWORD:-changeme} --bind 0.0.0.0:8000 --log warn -A surrealkv:/data/deepmiro.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - surreal-data:/data
+    restart: unless-stopped
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  deepmiro-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: deepmiro-backend
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.fireworks.ai/inference/v1}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-accounts/fireworks/models/minimax-m2p5}
+      LLM_BOOST_API_KEY: ${LLM_API_KEY}
+      LLM_BOOST_BASE_URL: ${LLM_BASE_URL:-https://api.fireworks.ai/inference/v1}
+      LLM_BOOST_MODEL_NAME: ${LLM_BOOST_MODEL_NAME:-accounts/fireworks/models/mixtral-8x22b-instruct}
+      USE_SURREALDB: "true"
+      SURREAL_URL: ws://surrealdb:8000
+      SURREAL_NAMESPACE: mirofish
+      SURREAL_DATABASE: production
+      SURREAL_USER: root
+      SURREAL_PASSWORD: ${SURREAL_PASSWORD:-changeme}
+      EMBEDDING_PROVIDER: openai
+      EMBEDDING_API_KEY: ${LLM_API_KEY}
+      EMBEDDING_BASE_URL: https://api.fireworks.ai/inference
+      EMBEDDING_MODEL: nomic-ai/nomic-embed-text-v1.5
+      EMBEDDING_DIMENSIONS: "768"
+      FLASK_HOST: 0.0.0.0
+      FLASK_PORT: "5001"
+      ZEP_API_KEY: surreal-mode
+    ports:
+      - "5001:5001"
+    volumes:
+      - uploads:/app/backend/uploads
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  deepmiro-mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: deepmiro-mcp
+    environment:
+      MIROFISH_URL: http://deepmiro-backend:5001
+      LLM_API_KEY: ${LLM_API_KEY}
+      TRANSPORT: http
+      HTTP_PORT: "3001"
+      MCP_API_KEY: ${MCP_API_KEY:-}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - deepmiro-backend
+    restart: unless-stopped
+
+volumes:
+  surreal-data:
+  uploads:

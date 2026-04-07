@@ -1,0 +1,9 @@
+{
+  "predict": {
+    "type": "http",
+    "url": "https://api.deepmiro.org/mcp",
+    "headers": {
+      "Authorization": "Bearer ${DEEPMIRO_API_KEY}"
+    }
+  }
+}

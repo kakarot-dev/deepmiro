@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepMiro — Predict anything. Install nothing.</title>
+  <meta name="description" content="AI-powered swarm predictions inside Claude. No setup. No infrastructure. Just ask.">
+  <meta property="og:title" content="DeepMiro — Predict anything. Install nothing.">
+  <meta property="og:description" content="Swarm intelligence predictions delivered straight to Claude Code and Claude Desktop.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://deepmiro.org">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #07070a;
+      --bg-raised: #0e0e14;
+      --bg-card: #111118;
+      --bg-card-hover: #16161f;
+      --border: #1e1e2a;
+      --border-glow: #22d3ee20;
+      --text: #e8e4de;
+      --text-muted: #7a7a8a;
+      --text-dim: #4a4a58;
+      --cyan: #22d3ee;
+      --cyan-dim: #0e7490;
+      --cyan-glow: rgba(34, 211, 238, 0.12);
+      --cyan-glow-strong: rgba(34, 211, 238, 0.25);
+      --green: #34d399;
+      --amber: #fbbf24;
+      --font-display: 'Syne', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    /* ─── NOISE OVERLAY ─── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.025;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+    }
+
+    /* ─── NAV ─── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 1.25rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(20px) saturate(1.2);
+      -webkit-backdrop-filter: blur(20px) saturate(1.2);
+      background: rgba(7, 7, 10, 0.7);
+      border-bottom: 1px solid var(--border);
+      transition: background 300ms ease;
+    }
+
+    .nav-logo {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1.2rem;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .nav-logo .dot {
+      width: 8px;
+      height: 8px;
+      background: var(--cyan);
+      border-radius: 50%;
+      box-shadow: 0 0 12px var(--cyan-glow-strong);
+      animation: pulse-dot 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; box-shadow: 0 0 12px var(--cyan-glow-strong); }
+      50% { opacity: 0.6; box-shadow: 0 0 6px var(--cyan-glow); }
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: color 200ms ease;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .nav-links a:hover {
+        color: var(--text);
+      }
+    }
+
+    .nav-cta {
+      font-size: 0.85rem !important;
+      font-weight: 600 !important;
+      color: var(--bg) !important;
+      background: var(--cyan);
+      padding: 0.5rem 1.25rem;
+      border-radius: 6px;
+      transition: transform 160ms var(--ease-out), box-shadow 200ms ease;
+    }
+
+    .nav-cta:active {
+      transform: scale(0.97);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .nav-cta:hover {
+        box-shadow: 0 0 24px var(--cyan-glow-strong);
+      }
+    }
+
+    /* ─── HERO ─── */
+    #hero {
+      position: relative;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8rem 2rem 4rem;
+      overflow: hidden;
+    }
+
+    #hero-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 2.5rem;
+      background: var(--bg-raised);
+      opacity: 0;
+      transform: translateY(12px);
+      animation: fadeUp 600ms var(--ease-out) 200ms forwards;
+    }
+
+    .hero-badge .badge-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    .hero-h1 {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(3rem, 8vw, 5.5rem);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.5rem;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: fadeUp 700ms var(--ease-out) 400ms forwards;
+    }
+
+    .hero-h1 .highlight {
+      background: linear-gradient(135deg, var(--cyan) 0%, #67e8f9 50%, var(--cyan) 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: shimmer 4s linear infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 200% center; }
+      100% { background-position: -200% center; }
+    }
+
+    .hero-sub {
+      font-size: clamp(1.1rem, 2.5vw, 1.35rem);
+      color: var(--text-muted);
+      max-width: 600px;
+      margin: 0 auto 3rem;
+      line-height: 1.7;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: fadeUp 700ms var(--ease-out) 600ms forwards;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: fadeUp 700ms var(--ease-out) 800ms forwards;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 2rem;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: transform 160ms var(--ease-out), box-shadow 200ms ease;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background: var(--cyan);
+      color: var(--bg);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .btn-primary:hover {
+        box-shadow: 0 0 40px var(--cyan-glow-strong), 0 0 80px var(--cyan-glow);
+      }
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .btn-ghost:hover {
+        border-color: var(--text-dim);
+        background: var(--bg-raised);
+      }
+    }
+
+    .hero-stats {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3rem;
+      margin-top: 4rem;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: fadeUp 700ms var(--ease-out) 1000ms forwards;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-number {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1.5rem;
+      color: var(--cyan);
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin-top: 0.2rem;
+    }
+
+    .stat-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border);
+    }
+
+    @keyframes fadeUp {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* ─── SECTIONS COMMON ─── */
+    section {
+      padding: 8rem 2rem;
+    }
+
+    .section-container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 1rem;
+    }
+
+    .section-title {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(2rem, 5vw, 3rem);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 1.25rem;
+    }
+
+    .section-desc {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 550px;
+      line-height: 1.7;
+    }
+
+    /* ─── REVEAL ANIMATION ─── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 600ms var(--ease-out), transform 600ms var(--ease-out);
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .reveal-stagger > .reveal {
+      transition-delay: calc(var(--i, 0) * 60ms);
+    }
+
+    /* ─── HOW IT WORKS ─── */
+    #how-it-works {
+      border-top: 1px solid var(--border);
+    }
+
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+      margin-top: 4rem;
+    }
+
+    .step-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 300ms ease, box-shadow 300ms ease;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .step-card:hover {
+        border-color: var(--border-glow);
+        box-shadow: 0 0 40px var(--cyan-glow), inset 0 1px 0 var(--border-glow);
+      }
+    }
+
+    .step-number {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 3rem;
+      color: var(--cyan);
+      opacity: 0.15;
+      position: absolute;
+      top: 1rem;
+      right: 1.5rem;
+    }
+
+    .step-icon {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 1.5rem;
+    }
+
+    .step-icon svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .step-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .step-desc {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ─── TERMINAL ─── */
+    #demo {
+      border-top: 1px solid var(--border);
+    }
+
+    .terminal-wrapper {
+      margin-top: 4rem;
+      max-width: 800px;
+    }
+
+    .terminal {
+      background: #0c0c12;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 1rem 1.25rem;
+      background: var(--bg-raised);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .terminal-dot:nth-child(1) { background: #ff5f57; }
+    .terminal-dot:nth-child(2) { background: #febc2e; }
+    .terminal-dot:nth-child(3) { background: #28c840; }
+
+    .terminal-title {
+      margin-left: 0.75rem;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+    }
+
+    .terminal-body {
+      padding: 1.5rem;
+      line-height: 1.9;
+      overflow-x: auto;
+    }
+
+    .terminal-body .prompt {
+      color: var(--cyan);
+    }
+
+    .terminal-body .command {
+      color: var(--text);
+    }
+
+    .terminal-body .output {
+      color: var(--text-muted);
+    }
+
+    .terminal-body .success {
+      color: var(--green);
+    }
+
+    .terminal-body .dim {
+      color: var(--text-dim);
+    }
+
+    .terminal-body .line {
+      display: block;
+      min-height: 1.4em;
+    }
+
+    .terminal-body .progress-bar {
+      display: inline-block;
+      color: var(--cyan);
+    }
+
+    /* ─── USE CASES ─── */
+    #use-cases {
+      border-top: 1px solid var(--border);
+    }
+
+    .cases-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+      margin-top: 4rem;
+    }
+
+    .case-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      display: flex;
+      gap: 1.25rem;
+      align-items: flex-start;
+      transition: border-color 300ms ease, transform 300ms var(--ease-out);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .case-card:hover {
+        border-color: var(--border-glow);
+        transform: translateY(-2px);
+      }
+    }
+
+    .case-icon {
+      flex-shrink: 0;
+      width: 44px;
+      height: 44px;
+      background: var(--cyan-glow);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+    }
+
+    .case-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .case-desc {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ─── PRICING ─── */
+    #pricing {
+      border-top: 1px solid var(--border);
+    }
+
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      margin-top: 4rem;
+    }
+
+    .price-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 2.5rem 2rem;
+      position: relative;
+      transition: border-color 300ms ease, box-shadow 300ms ease;
+    }
+
+    .price-card.featured {
+      border-color: var(--cyan-dim);
+      box-shadow: 0 0 60px var(--cyan-glow), 0 0 120px rgba(34, 211, 238, 0.05);
+    }
+
+    .price-card.featured::before {
+      content: 'Most Popular';
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--cyan);
+      color: var(--bg);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 0.3rem 1rem;
+      border-radius: 100px;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .price-card:hover {
+        border-color: var(--border-glow);
+      }
+    }
+
+    .price-tier {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .price-tagline {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-bottom: 1.5rem;
+    }
+
+    .price-amount {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 3rem;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+
+    .price-amount .currency {
+      font-size: 1.5rem;
+      color: var(--text-muted);
+      vertical-align: super;
+    }
+
+    .price-amount .period {
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    .price-features {
+      list-style: none;
+      margin: 2rem 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .price-features li {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .price-features .check {
+      color: var(--cyan);
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    .price-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 0.85rem;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: transform 160ms var(--ease-out), box-shadow 200ms ease;
+    }
+
+    .price-btn:active {
+      transform: scale(0.97);
+    }
+
+    .price-btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .price-btn-outline:hover {
+        border-color: var(--text-dim);
+      }
+    }
+
+    .price-btn-fill {
+      background: var(--cyan);
+      color: var(--bg);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .price-btn-fill:hover {
+        box-shadow: 0 0 32px var(--cyan-glow-strong);
+      }
+    }
+
+    /* ─── OPEN SOURCE ─── */
+    #open-source {
+      border-top: 1px solid var(--border);
+    }
+
+    .oss-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 3.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 3rem;
+      margin-top: 4rem;
+    }
+
+    .oss-text {
+      max-width: 550px;
+    }
+
+    .oss-title {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1.75rem;
+      margin-bottom: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .oss-desc {
+      color: var(--text-muted);
+      font-size: 1rem;
+      line-height: 1.7;
+      margin-bottom: 1.5rem;
+    }
+
+    .oss-code {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--cyan);
+      cursor: pointer;
+      transition: border-color 200ms ease;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .oss-code:hover {
+        border-color: var(--cyan-dim);
+      }
+    }
+
+    .oss-code .copy-icon {
+      color: var(--text-dim);
+      transition: color 200ms ease;
+    }
+
+    .oss-badge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      flex-shrink: 0;
+    }
+
+    .agpl-badge {
+      width: 100px;
+      height: 100px;
+      border: 2px solid var(--border);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 0.75rem;
+      color: var(--cyan);
+      text-align: center;
+      line-height: 1.3;
+    }
+
+    .oss-stars {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+
+    /* ─── FOOTER ─── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 4rem 2rem 3rem;
+    }
+
+    .footer-container {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 3rem;
+      flex-wrap: wrap;
+    }
+
+    .footer-brand {
+      max-width: 280px;
+    }
+
+    .footer-logo {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1.1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .footer-tagline {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .footer-cols {
+      display: flex;
+      gap: 5rem;
+    }
+
+    .footer-col h4 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      color: var(--text);
+    }
+
+    .footer-col ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .footer-col a {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      transition: color 200ms ease;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .footer-col a:hover {
+        color: var(--text-muted);
+      }
+    }
+
+    .footer-bottom {
+      max-width: 1100px;
+      margin: 3rem auto 0;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 900px) {
+      .steps-grid,
+      .pricing-grid {
+        grid-template-columns: 1fr;
+        max-width: 500px;
+      }
+
+      .cases-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .oss-card {
+        flex-direction: column;
+        text-align: center;
+        padding: 2.5rem 2rem;
+      }
+
+      .footer-cols {
+        gap: 3rem;
+      }
+
+      .hero-stats {
+        gap: 1.5rem;
+      }
+    }
+
+    @media (max-width: 600px) {
+      nav {
+        padding: 1rem 1.25rem;
+      }
+
+      .nav-links .hide-mobile {
+        display: none;
+      }
+
+      section {
+        padding: 5rem 1.25rem;
+      }
+
+      .footer-container {
+        flex-direction: column;
+      }
+
+      .footer-cols {
+        flex-direction: column;
+        gap: 2rem;
+      }
+
+      .footer-bottom {
+        flex-direction: column;
+        gap: 0.75rem;
+        text-align: center;
+      }
+
+      .hero-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+
+    /* ─── REDUCED MOTION ─── */
+    @media (prefers-reduced-motion: reduce) {
+      .reveal {
+        opacity: 1;
+        transform: none;
+        transition: none;
+      }
+
+      .hero-h1, .hero-sub, .hero-actions, .hero-badge, .hero-stats {
+        opacity: 1;
+        transform: none;
+        animation: none;
+      }
+
+      @keyframes shimmer {
+        0%, 100% { background-position: 0% center; }
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ─── NAV ─── -->
+  <nav>
+    <a href="#" class="nav-logo">
+      <span class="dot"></span>
+      DeepMiro
+    </a>
+    <ul class="nav-links">
+      <li><a href="#how-it-works" class="hide-mobile">How it works</a></li>
+      <li><a href="#pricing" class="hide-mobile">Pricing</a></li>
+      <li><a href="https://github.com/kakarot-dev/deepmiro" target="_blank" rel="noopener">GitHub</a></li>
+      <li><a href="#pricing" class="nav-cta">Get started</a></li>
+    </ul>
+  </nav>
+
+  <!-- ─── HERO ─── -->
+  <section id="hero">
+    <canvas id="hero-canvas"></canvas>
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        Now available for Claude Code &amp; Claude Desktop
+      </div>
+      <h1 class="hero-h1">
+        Predict anything.<br>
+        <span class="highlight">Install nothing.</span>
+      </h1>
+      <p class="hero-sub">
+        Swarm intelligence predictions delivered straight to Claude Code and Claude Desktop. No setup. No infrastructure. Just ask.
+      </p>
+      <div class="hero-actions">
+        <a href="#pricing" class="btn btn-primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Start predicting
+        </a>
+        <a href="#demo" class="btn btn-ghost">
+          See it in action
+        </a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat">
+          <div class="stat-number">33k+</div>
+          <div class="stat-label">MiroFish GitHub stars</div>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <div class="stat-number">&lt; 30s</div>
+          <div class="stat-label">Setup time</div>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <div class="stat-number">3</div>
+          <div class="stat-label">Free predictions / mo</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── HOW IT WORKS ─── -->
+  <section id="how-it-works">
+    <div class="section-container">
+      <div class="reveal">
+        <div class="section-label">How it works</div>
+        <h2 class="section-title">Three steps. No Docker.<br>No config files. No terminal.</h2>
+        <p class="section-desc">MiroFish simulates thousands of AI agents debating your question. We handle all of that. You just ask.</p>
+      </div>
+
+      <div class="steps-grid reveal-stagger">
+        <div class="step-card reveal" style="--i: 0">
+          <div class="step-number">01</div>
+          <div class="step-icon">
+            <svg viewBox="0 0 48 48" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="10" width="36" height="28" rx="4"/>
+              <path d="M16 22l4 4-4 4"/>
+              <path d="M24 30h8"/>
+            </svg>
+          </div>
+          <h3 class="step-title">Connect</h3>
+          <p class="step-desc">Add DeepMiro to Claude Code or Claude Desktop. One line in your MCP config. Done.</p>
+        </div>
+
+        <div class="step-card reveal" style="--i: 1">
+          <div class="step-number">02</div>
+          <div class="step-icon">
+            <svg viewBox="0 0 48 48" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="24" cy="24" r="18"/>
+              <path d="M18 18c0 0 2-4 6-4s6 4 6 4"/>
+              <path d="M24 28v0"/>
+              <circle cx="24" cy="32" r="1.5" fill="var(--cyan)"/>
+            </svg>
+          </div>
+          <h3 class="step-title">Ask</h3>
+          <p class="step-desc">Ask any question. "Will remote work increase by 2027?" — Claude handles the rest.</p>
+        </div>
+
+        <div class="step-card reveal" style="--i: 2">
+          <div class="step-number">03</div>
+          <div class="step-icon">
+            <svg viewBox="0 0 48 48" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 36V20l12-8 12 8v16"/>
+              <path d="M8 40h32"/>
+              <path d="M20 36v-8h8v8"/>
+              <circle cx="36" cy="14" r="6" fill="var(--bg)" stroke="var(--green)" stroke-width="2"/>
+              <path d="M33 14l2 2 4-4" stroke="var(--green)" stroke-width="2"/>
+            </svg>
+          </div>
+          <h3 class="step-title">Predict</h3>
+          <p class="step-desc">Get a full prediction report — agent consensus, confidence levels, reasoning chains — right in your chat.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── DEMO TERMINAL ─── -->
+  <section id="demo">
+    <div class="section-container">
+      <div class="reveal">
+        <div class="section-label">See it in action</div>
+        <h2 class="section-title">This is the entire experience.</h2>
+        <p class="section-desc">No dashboards. No web apps. No learning curve. Just a conversation with Claude.</p>
+      </div>
+
+      <div class="terminal-wrapper reveal">
+        <div class="terminal">
+          <div class="terminal-header">
+            <div class="terminal-dot"></div>
+            <div class="terminal-dot"></div>
+            <div class="terminal-dot"></div>
+            <span class="terminal-title">Claude Code</span>
+          </div>
+          <div class="terminal-body">
+            <span class="line"><span class="prompt">you </span><span class="command">Will Apple's Vision Pro succeed as a mass-market product by 2028?</span></span>
+            <span class="line">&nbsp;</span>
+            <span class="line"><span class="prompt">claude </span><span class="output">I'll run a swarm prediction on this. Creating a simulation with 40 agents</span></span>
+            <span class="line"><span class="output">across tech industry, consumer behavior, and market analysis domains...</span></span>
+            <span class="line">&nbsp;</span>
+            <span class="line"><span class="dim">  Generating agent personas    </span><span class="success">done</span></span>
+            <span class="line"><span class="dim">  Building knowledge graph      </span><span class="success">done</span></span>
+            <span class="line"><span class="dim">  Running 72h simulation        </span><span class="progress-bar">████████████████</span><span class="success"> done</span></span>
+            <span class="line"><span class="dim">  Generating prediction report  </span><span class="success">done</span></span>
+            <span class="line">&nbsp;</span>
+            <span class="line"><span class="output">## Prediction Report: Apple Vision Pro Mass-Market Viability</span></span>
+            <span class="line">&nbsp;</span>
+            <span class="line"><span class="output"><strong>Consensus:</strong> Unlikely (72% of agents)</span></span>
+            <span class="line"><span class="output"><strong>Confidence:</strong> High (agent agreement: 0.81)</span></span>
+            <span class="line">&nbsp;</span>
+            <span class="line"><span class="output">The swarm predicts Vision Pro will remain a niche professional tool</span></span>
+            <span class="line"><span class="output">through 2028. Key factors: price elasticity threshold not met below</span></span>
+            <span class="line"><span class="output">$1,500, limited killer app ecosystem, and social adoption barriers...</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── USE CASES ─── -->
+  <section id="use-cases">
+    <div class="section-container">
+      <div class="reveal">
+        <div class="section-label">Use cases</div>
+        <h2 class="section-title">Ask the questions that matter.</h2>
+        <p class="section-desc">If it involves human behavior, market dynamics, or public opinion — the swarm can model it.</p>
+      </div>
+
+      <div class="cases-grid reveal-stagger">
+        <div class="case-card reveal" style="--i: 0">
+          <div class="case-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+          </div>
+          <div>
+            <div class="case-title">Market trends</div>
+            <div class="case-desc">Will this product category grow? How will consumers react to a price change? Model demand before you commit.</div>
+          </div>
+        </div>
+
+        <div class="case-card reveal" style="--i: 1">
+          <div class="case-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
+          </div>
+          <div>
+            <div class="case-title">PR &amp; comms strategy</div>
+            <div class="case-desc">Test how the public might react to an announcement before you make it. Simulate the discourse.</div>
+          </div>
+        </div>
+
+        <div class="case-card reveal" style="--i: 2">
+          <div class="case-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+          </div>
+          <div>
+            <div class="case-title">Policy impact</div>
+            <div class="case-desc">What happens if we change this policy? Simulate how different demographics respond to regulatory changes.</div>
+          </div>
+        </div>
+
+        <div class="case-card reveal" style="--i: 3">
+          <div class="case-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <div>
+            <div class="case-title">Technology adoption</div>
+            <div class="case-desc">Will users switch? How fast will adoption happen? Predict the curve before building the roadmap.</div>
+          </div>
+        </div>
+
+        <div class="case-card reveal" style="--i: 4">
+          <div class="case-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          </div>
+          <div>
+            <div class="case-title">Competitive analysis</div>
+            <div class="case-desc">How will the market react to a competitor's move? Simulate the ripple effects across your industry.</div>
+          </div>
+        </div>
+
+        <div class="case-card reveal" style="--i: 5">
+          <div class="case-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          </div>
+          <div>
+            <div class="case-title">Scenario planning</div>
+            <div class="case-desc">What if X happens? Run any hypothetical through the swarm and get a structured prediction with reasoning.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── PRICING ─── -->
+  <section id="pricing">
+    <div class="section-container">
+      <div class="reveal">
+        <div class="section-label">Pricing</div>
+        <h2 class="section-title">Start free. Scale when ready.</h2>
+        <p class="section-desc">Same prediction quality on every tier. No throttling, no feature gates. Just more capacity.</p>
+      </div>
+
+      <div class="pricing-grid reveal-stagger">
+        <div class="price-card reveal" style="--i: 0">
+          <div class="price-tier">Free</div>
+          <div class="price-tagline">Try it out</div>
+          <div class="price-amount">
+            <span class="currency">$</span>0
+            <span class="period">/mo</span>
+          </div>
+          <ul class="price-features">
+            <li><span class="check">&#10003;</span> 3 predictions per month</li>
+            <li><span class="check">&#10003;</span> All prediction modes</li>
+            <li><span class="check">&#10003;</span> Full reports</li>
+            <li><span class="check">&#10003;</span> 1 concurrent simulation</li>
+            <li><span class="check">&#10003;</span> Community support</li>
+          </ul>
+          <button class="price-btn price-btn-outline">Get started free</button>
+        </div>
+
+        <div class="price-card featured reveal" style="--i: 1">
+          <div class="price-tier">Pro</div>
+          <div class="price-tagline">For regular use</div>
+          <div class="price-amount">
+            <span class="currency">$</span>15
+            <span class="period">/mo</span>
+          </div>
+          <ul class="price-features">
+            <li><span class="check">&#10003;</span> 30 predictions per month</li>
+            <li><span class="check">&#10003;</span> All prediction modes</li>
+            <li><span class="check">&#10003;</span> Full reports</li>
+            <li><span class="check">&#10003;</span> 3 concurrent simulations</li>
+            <li><span class="check">&#10003;</span> Email support</li>
+          </ul>
+          <button class="price-btn price-btn-fill">Start with Pro</button>
+        </div>
+
+        <div class="price-card reveal" style="--i: 2">
+          <div class="price-tier">Business</div>
+          <div class="price-tagline">For teams &amp; power users</div>
+          <div class="price-amount">
+            <span class="currency">$</span>40
+            <span class="period">/mo</span>
+          </div>
+          <ul class="price-features">
+            <li><span class="check">&#10003;</span> 100 predictions per month</li>
+            <li><span class="check">&#10003;</span> All prediction modes</li>
+            <li><span class="check">&#10003;</span> Full reports</li>
+            <li><span class="check">&#10003;</span> 3 concurrent + priority queue</li>
+            <li><span class="check">&#10003;</span> Priority support</li>
+          </ul>
+          <button class="price-btn price-btn-outline">Go Business</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── OPEN SOURCE ─── -->
+  <section id="open-source">
+    <div class="section-container">
+      <div class="oss-card reveal">
+        <div class="oss-text">
+          <div class="section-label">Open source</div>
+          <h3 class="oss-title">Prefer to self-host? It's all here.</h3>
+          <p class="oss-desc">
+            DeepMiro is open source under AGPL-3.0. Run it on your own infrastructure with your own LLM. Full Docker Compose setup included.
+          </p>
+          <div class="oss-code" onclick="navigator.clipboard.writeText('docker compose up -d'); this.querySelector('.copy-label').textContent = 'Copied!'">
+            <span>docker compose up -d</span>
+            <span class="copy-icon copy-label">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </span>
+          </div>
+        </div>
+        <div class="oss-badge">
+          <div class="agpl-badge">AGPL<br>3.0</div>
+          <div class="oss-stars">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--amber)" stroke="none"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            33,000+ stars
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── FOOTER ─── -->
+  <footer>
+    <div class="footer-container">
+      <div class="footer-brand">
+        <div class="footer-logo">DeepMiro</div>
+        <div class="footer-tagline">Swarm intelligence predictions for Claude. Built by Joel Libni.</div>
+      </div>
+      <div class="footer-cols">
+        <div class="footer-col">
+          <h4>Product</h4>
+          <ul>
+            <li><a href="#how-it-works">How it works</a></li>
+            <li><a href="#pricing">Pricing</a></li>
+            <li><a href="#demo">Demo</a></li>
+            <li><a href="https://github.com/kakarot-dev/deepmiro" target="_blank" rel="noopener">GitHub</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Legal</h4>
+          <ul>
+            <li><a href="/terms-of-service">Terms of Service</a></li>
+            <li><a href="/privacy-policy">Privacy Policy</a></li>
+            <li><a href="/cookie-policy">Cookie Policy</a></li>
+            <li><a href="/acceptable-use-policy">Acceptable Use</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Contact</h4>
+          <ul>
+            <li><a href="mailto:kakarot.joel@gmail.com">kakarot.joel@gmail.com</a></li>
+            <li><a href="https://github.com/kakarot-dev/deepmiro/issues" target="_blank" rel="noopener">Report an issue</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2026 Joel Libni. All rights reserved.</span>
+      <span>Powered by <a href="https://github.com/666ghj/MiroFish" target="_blank" rel="noopener" style="color: var(--text-muted);">MiroFish</a></span>
+    </div>
+  </footer>
+
+  <!-- ─── THREE.JS HERO PARTICLES ─── -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // ─── Particle convergence animation ───
+    (function () {
+      const canvas = document.getElementById('hero-canvas');
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+      camera.position.z = 30;
+
+      const PARTICLE_COUNT = 600;
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(PARTICLE_COUNT * 3);
+      const origins = new Float32Array(PARTICLE_COUNT * 3);
+      const sizes = new Float32Array(PARTICLE_COUNT);
+      const phases = new Float32Array(PARTICLE_COUNT);
+
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = 8 + Math.random() * 14;
+        positions[i3] = origins[i3] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i3 + 1] = origins[i3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[i3 + 2] = origins[i3 + 2] = r * Math.cos(phi);
+        sizes[i] = 1.5 + Math.random() * 2.5;
+        phases[i] = Math.random() * Math.PI * 2;
+      }
+
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+      const vertexShader = `
+        attribute float size;
+        varying float vAlpha;
+        void main() {
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size * (20.0 / -mvPosition.z);
+          gl_Position = projectionMatrix * mvPosition;
+          vAlpha = 0.4 + 0.6 * (size / 4.0);
+        }
+      `;
+
+      const fragmentShader = `
+        varying float vAlpha;
+        void main() {
+          float d = length(gl_PointCoord - vec2(0.5));
+          if (d > 0.5) discard;
+          float alpha = vAlpha * smoothstep(0.5, 0.1, d);
+          gl_FragColor = vec4(0.133, 0.827, 0.933, alpha);
+        }
+      `;
+
+      const material = new THREE.ShaderMaterial({
+        vertexShader,
+        fragmentShader,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+
+      const points = new THREE.Points(geometry, material);
+      scene.add(points);
+
+      // Glow at center
+      const glowGeo = new THREE.SphereGeometry(0.5, 16, 16);
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0,
+      });
+      const glowSphere = new THREE.Mesh(glowGeo, glowMat);
+      scene.add(glowSphere);
+
+      let time = 0;
+      const CYCLE = 10; // seconds per convergence cycle
+
+      function resize() {
+        const hero = document.getElementById('hero');
+        const w = hero.clientWidth;
+        const h = hero.clientHeight;
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        time += 0.008;
+
+        const cycleT = (time % CYCLE) / CYCLE;
+        // 0 → 0.4: drift | 0.4 → 0.7: converge | 0.7 → 0.85: hold | 0.85 → 1: scatter
+        let convergence = 0;
+        if (cycleT < 0.4) {
+          convergence = 0;
+        } else if (cycleT < 0.7) {
+          convergence = (cycleT - 0.4) / 0.3;
+          convergence = convergence * convergence * (3 - 2 * convergence); // smoothstep
+        } else if (cycleT < 0.85) {
+          convergence = 1;
+        } else {
+          convergence = 1 - ((cycleT - 0.85) / 0.15);
+          convergence = convergence * convergence * (3 - 2 * convergence);
+        }
+
+        const pos = geometry.attributes.position.array;
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          const i3 = i * 3;
+          const phase = phases[i];
+
+          // Drift motion
+          const driftX = Math.sin(time * 0.3 + phase) * 0.5;
+          const driftY = Math.cos(time * 0.2 + phase * 1.3) * 0.5;
+          const driftZ = Math.sin(time * 0.15 + phase * 0.7) * 0.3;
+
+          // Lerp between origin+drift and center
+          const ox = origins[i3] + driftX;
+          const oy = origins[i3 + 1] + driftY;
+          const oz = origins[i3 + 2] + driftZ;
+
+          pos[i3] = ox * (1 - convergence) + 0 * convergence;
+          pos[i3 + 1] = oy * (1 - convergence) + 0 * convergence;
+          pos[i3 + 2] = oz * (1 - convergence) + 0 * convergence;
+        }
+        geometry.attributes.position.needsUpdate = true;
+
+        // Center glow
+        glowMat.opacity = convergence * 0.6;
+        glowSphere.scale.setScalar(1 + convergence * 3);
+
+        // Slow rotation
+        points.rotation.y = time * 0.05;
+        points.rotation.x = Math.sin(time * 0.03) * 0.1;
+
+        renderer.render(scene, camera);
+      }
+
+      resize();
+      window.addEventListener('resize', resize);
+
+      // Respect prefers-reduced-motion
+      const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+      if (!mq.matches) {
+        animate();
+      } else {
+        renderer.render(scene, camera);
+      }
+    })();
+
+    // ─── Scroll reveal ───
+    (function () {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('visible');
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.1, rootMargin: '-40px' }
+      );
+
+      document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+    })();
+
+    // ─── Smooth scroll for nav links ───
+    document.querySelectorAll('a[href^="#"]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        const target = document.querySelector(a.getAttribute('href'));
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+  </script>
+</body>
+</html>

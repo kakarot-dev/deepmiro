@@ -1,60 +1,48 @@
-# OS
-.DS_Store
-Thumbs.db
-
-# 环境变量（保护敏感信息）
+# Environment
 .env
-.env.local
-.env.*.local
-.env.development
-.env.test
-.env.production
+.env.*
+!.env.example
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# Dependencies
+node_modules/
 .venv/
 venv/
-ENV/
-.eggs/
+__pycache__/
+*.pyc
+*.py[cod]
 *.egg-info/
+
+# Build
 dist/
 build/
 
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Runtime
+*.log
+*.pid
+uploads/
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
 
-# 测试
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Cursor
-.cursor/
+# Project
 .claude/
-
-# 文档与测试程序
-mydoc/
-mytest/
-
-# 日志文件
-backend/logs/
-*.log
-
-# 上传文件
-backend/uploads/
-
-# Docker 数据
 data/
+logos/
+
+# Helm secrets (real credentials)
+helm-chart/secrets.yaml
+# Work in progress
+logo-*.html

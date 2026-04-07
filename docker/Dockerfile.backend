@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Copy engine source from monorepo
+COPY engine/ /app/deepmiro/engine/
+
+# Install Python deps
+WORKDIR /app/deepmiro/engine
+RUN uv venv .venv && \
+    . .venv/bin/activate && \
+    uv pip install -e . && \
+    uv pip install surrealdb
+
+ENV PATH="/app/deepmiro/engine/.venv/bin:$PATH"
+EXPOSE 5001
+
+CMD ["python", "run.py"]
