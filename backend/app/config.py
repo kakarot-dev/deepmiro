@@ -38,7 +38,6 @@ class Config:
     LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME', '')
     
     # Zep配置 (legacy fallback -- only needed when GRAPH_BACKEND=zep)
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
 
     # Graph storage backend: "surrealdb" (default) or "zep"
     GRAPH_BACKEND = os.environ.get('GRAPH_BACKEND', 'surrealdb')
@@ -97,9 +96,6 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
-        # Only require ZEP_API_KEY when using the Zep backend
-        if cls.GRAPH_BACKEND == 'zep' and not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置 (GRAPH_BACKEND=zep)")
         # Validate SurrealDB config when using that backend
         if cls.GRAPH_BACKEND == 'surrealdb':
             if not cls.SURREAL_URL:

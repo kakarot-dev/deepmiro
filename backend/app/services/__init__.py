@@ -12,9 +12,9 @@ from .graph_tools import GraphToolsService
 from .graph_memory_updater import GraphMemoryUpdater, GraphMemoryManager, AgentActivity
 
 # Backward-compatible Zep-prefixed aliases
-from .zep_entity_reader import ZepEntityReader
-from .zep_graph_memory_updater import ZepGraphMemoryUpdater, ZepGraphMemoryManager
-from .zep_tools import ZepToolsService
+from .entity_reader import EntityReader
+from .graph_memory_updater import GraphMemoryUpdater, GraphMemoryManager
+from .graph_tools import GraphToolsService
 
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_manager import SimulationManager, SimulationState, SimulationStatus
@@ -52,10 +52,10 @@ __all__ = [
     'GraphMemoryUpdater',
     'GraphMemoryManager',
     # Legacy aliases
-    'ZepEntityReader',
-    'ZepToolsService',
-    'ZepGraphMemoryUpdater',
-    'ZepGraphMemoryManager',
+    'EntityReader',
+    'GraphToolsService',
+    'GraphMemoryUpdater',
+    'GraphMemoryManager',
     # Shared
     'EntityNode',
     'FilteredEntities',

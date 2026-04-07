@@ -52,9 +52,26 @@ Five phases, fully automated:
 - 📈 **Structured reports** — the ReportAgent produces analysis with sentiment breakdowns, key faction identification, and outcome probabilities.
 - 🎙️ **Agent interrogation** — after simulation, interview any agent to understand their beliefs and decision process.
 
-## ⚡ Performance
+## 🔥 What's Different
 
-Benchmarked on a 15-agent quick simulation with enriched prompts:
+DeepMiro is a performance-focused fork of the original [MiroFish](https://github.com/666ghj/MiroFish) engine. Same OASIS simulation core, rebuilt infrastructure:
+
+| Component | MiroFish (original) | DeepMiro |
+|-----------|-------------------|----------|
+| **Recommendation engine** | Full LLM call every round (~200s/round) | Cached [TWHIN-BERT](https://huggingface.co/Twitter/twhin-bert-base) embeddings (~15ms/round) |
+| **Entity extraction** | Sequential NER processing | 5-worker parallel NER via ThreadPoolExecutor |
+| **Graph build time** | ~5 minutes | ~56 seconds |
+| **Graph database** | Zep Cloud (proprietary, external dependency) | SurrealDB (self-hosted, open-source) |
+| **Vector search** | Cloud-dependent | Hybrid HNSW + BM25 (local, 768-dim cosine) |
+| **Embedding model** | Tied to Zep | `nomic-embed-text-v1.5` via Fireworks (swappable) |
+| **Document ingestion** | Manual text input | Upload endpoint with magic-byte validation + PyMuPDF sanitization (PDF, MD, TXT) |
+| **Database concurrency** | Standard SQLite | WAL mode for concurrent reads during simulation |
+| **LLM provider** | Alibaba Qwen (hardcoded) | Any OpenAI-compatible API (configurable) |
+| **Deployment** | Docker only | Docker + Helm chart + k3s-ready |
+
+### ⚡ Benchmarks
+
+15-agent quick simulation, enriched prompt, measured end-to-end:
 
 | Stage | Time |
 |-------|------|
@@ -63,10 +80,7 @@ Benchmarked on a 15-agent quick simulation with enriched prompts:
 | Simulation (110 Twitter + 26 Reddit actions) | ~4 min |
 | **Total pipeline** | **~7 min (quick) / ~12 min (standard, 80 agents)** |
 
-Key optimizations over the base engine:
-- 🧲 **Cached TWHIN-BERT** recommendation system — 15ms/round (down from 200s)
-- ⚡ **Parallel NER** with 5 concurrent workers — graph build 5min → 56s
-- 🗄️ **WAL mode** on SQLite for concurrent read performance
+The biggest win is the recommendation system: TWHIN-BERT embeddings are computed once per user at setup, then only new posts are embedded incrementally each round. Cosine similarity via numpy replaces what was previously a full LLM inference call — **13,000x faster per round**.
 
 ## 🚀 Quick Start
 
@@ -107,7 +121,6 @@ npm run setup:all
 Or step by step:
 
 ```bash
-npm run setup           # Node dependencies (root + frontend)
 npm run setup:backend   # Python dependencies (auto-creates venv)
 ```
 
@@ -119,8 +132,9 @@ npm run dev
 
 | Service | URL |
 |---------|-----|
-| 🖥️ Frontend | `http://localhost:3000` |
 | 🔌 Backend API | `http://localhost:5001` |
+
+> **Web UI:** A new dashboard is coming soon. For now, interact via the [DeepMiro MCP plugin](https://github.com/kakarot-dev/deepmiro) for Claude Code, or use the REST API directly.
 
 ### 🐳 Docker Deployment
 
@@ -140,12 +154,7 @@ deepmiro-engine/
 │   │   ├── storage/        # SurrealDB adapter, embedding service, NER
 │   │   └── utils/          # LLM client, retry logic, logging
 │   └── pyproject.toml
-├── frontend/                # Vue 3 + Vite
-│   ├── src/
-│   │   ├── components/     # 5-step workflow UI
-│   │   ├── views/          # Home, Simulation, Report, Interaction
-│   │   └── api/            # API client
-│   └── vite.config.js
+├── (frontend — coming soon)
 ├── locales/                 # i18n (en, zh)
 ├── docker-compose.yml
 └── Dockerfile

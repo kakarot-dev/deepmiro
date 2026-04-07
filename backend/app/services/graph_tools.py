@@ -1059,4 +1059,4 @@ class GraphToolsService:
 
 
 # Backward-compatible alias
-ZepToolsService = GraphToolsService
+GraphToolsService = GraphToolsService

@@ -5,7 +5,6 @@ Returns the configured GraphStorage implementation based on the
 GRAPH_BACKEND environment variable:
 
   - "surrealdb" (default) -> SurrealDBStorage
-  - "zep"                 -> ZepBackend (original Zep Cloud calls)
 """
 
 import os
@@ -43,16 +42,10 @@ def get_storage(force_new: bool = False) -> GraphStorage:
         _instance = SurrealDBStorage()
         logger.info("Storage backend: SurrealDB")
 
-    elif backend == "zep":
-        from .zep_backend import ZepBackend
-
-        _instance = ZepBackend()
-        logger.info("Storage backend: Zep Cloud (legacy)")
-
     else:
         raise ValueError(
             f"Unknown GRAPH_BACKEND={backend!r}. "
-            f"Supported values: 'surrealdb', 'zep'"
+            f"Supported values: 'surrealdb'"
         )
 
     return _instance

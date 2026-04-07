@@ -22,8 +22,8 @@ from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
-from .zep_tools import (
-    ZepToolsService, 
+from .graph_tools import (
+    GraphToolsService, 
     SearchResult, 
     InsightForgeResult, 
     PanoramaResult,
@@ -553,6 +553,51 @@ Workflow:
 
 [Important] The OASIS simulation environment must be running to use this feature!"""
 
+TOOL_DESC_SIM_ACTIONS = """\
+[Simulation Actions — What Agents Actually Did]
+Retrieves real agent actions from the completed simulation.
+Filter by platform (twitter/reddit), agent_name, or action_type.
+Returns actual posts, likes, reposts, and comments with content.
+
+[Use Cases]
+- Find what a specific agent posted during the simulation
+- Get all CREATE_POST actions to see what content was generated
+- Filter by platform to compare Twitter vs Reddit behavior
+
+[Parameters]
+- platform: "twitter" or "reddit" (optional)
+- agent_name: filter by agent name (optional)
+- action_type: CREATE_POST, LIKE_POST, REPOST, etc. (optional)
+- limit: max results (default 30)"""
+
+TOOL_DESC_TRENDING = """\
+[Trending Posts — Most Engaged Content]
+Returns posts that received the most engagement (likes, reposts).
+Use this to find viral content and key discussion points.
+
+[Parameters]
+- min_engagement: minimum likes+reposts to qualify (default 2)"""
+
+TOOL_DESC_AGENT_ACTIVITY = """\
+[Agent Activity — Who Did What]
+Returns per-agent statistics: total actions, posts created, likes given.
+Shows most active agents and lurkers.
+Use this to identify key influencers and silent observers."""
+
+TOOL_DESC_AGENT_POSTS = """\
+[Agent Posts — Actual Content Created]
+Returns the actual text content of posts and comments created by agents.
+These are REAL quotes from the simulation — cite them directly.
+
+[Parameters]
+- limit: max posts to return (default 20)"""
+
+TOOL_DESC_ROUND_SUMMARY = """\
+[Round Summary — Timeline of the Simulation]
+Returns per-round statistics: how many agents were active, how many posts
+were created, how activity changed over time.
+Use this to identify peaks, quiet periods, and momentum shifts."""
+
 # ── 大纲规划 prompt ──
 
 PLAN_SYSTEM_PROMPT = """\
@@ -937,7 +982,7 @@ class ReportAgent:
         simulation_id: str,
         simulation_requirement: str,
         llm_client: Optional[LLMClient] = None,
-        zep_tools: Optional[ZepToolsService] = None
+        graph_tools: Optional[GraphToolsService] = None
     ):
         """
         初始化Report Agent
@@ -954,7 +999,7 @@ class ReportAgent:
         self.simulation_requirement = simulation_requirement
         
         self.llm = llm_client or LLMClient()
-        self.zep_tools = zep_tools or ZepToolsService()
+        self.graph_tools = graph_tools or GraphToolsService()
         
         # 工具定义
         self.tools = self._define_tools()
@@ -1000,7 +1045,42 @@ class ReportAgent:
                     "interview_topic": "Interview topic or requirement description (e.g., 'understand student views on the dormitory formaldehyde incident')",
                     "max_agents": "Maximum number of Agents to interview (optional, default 5, max 10)"
                 }
-            }
+            },
+            # ── Simulation data tools (what agents actually did) ──
+            "get_simulation_actions": {
+                "name": "get_simulation_actions",
+                "description": TOOL_DESC_SIM_ACTIONS,
+                "parameters": {
+                    "platform": "twitter or reddit (optional)",
+                    "agent_name": "Filter by agent name (optional)",
+                    "action_type": "CREATE_POST, LIKE_POST, REPOST, etc. (optional)",
+                    "limit": "Max results (default 30)"
+                }
+            },
+            "get_trending_posts": {
+                "name": "get_trending_posts",
+                "description": TOOL_DESC_TRENDING,
+                "parameters": {
+                    "min_engagement": "Minimum likes+reposts (default 2)"
+                }
+            },
+            "get_agent_activity": {
+                "name": "get_agent_activity",
+                "description": TOOL_DESC_AGENT_ACTIVITY,
+                "parameters": {}
+            },
+            "get_agent_posts": {
+                "name": "get_agent_posts",
+                "description": TOOL_DESC_AGENT_POSTS,
+                "parameters": {
+                    "limit": "Max posts to return (default 20)"
+                }
+            },
+            "get_round_summary": {
+                "name": "get_round_summary",
+                "description": TOOL_DESC_ROUND_SUMMARY,
+                "parameters": {}
+            },
         }
     
     def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "") -> str:
@@ -1021,7 +1101,7 @@ class ReportAgent:
             if tool_name == "insight_forge":
                 query = parameters.get("query", "")
                 ctx = parameters.get("report_context", "") or report_context
-                result = self.zep_tools.insight_forge(
+                result = self.graph_tools.insight_forge(
                     graph_id=self.graph_id,
                     query=query,
                     simulation_requirement=self.simulation_requirement,
@@ -1035,7 +1115,7 @@ class ReportAgent:
                 include_expired = parameters.get("include_expired", True)
                 if isinstance(include_expired, str):
                     include_expired = include_expired.lower() in ['true', '1', 'yes']
-                result = self.zep_tools.panorama_search(
+                result = self.graph_tools.panorama_search(
                     graph_id=self.graph_id,
                     query=query,
                     include_expired=include_expired
@@ -1048,7 +1128,7 @@ class ReportAgent:
                 limit = parameters.get("limit", 10)
                 if isinstance(limit, str):
                     limit = int(limit)
-                result = self.zep_tools.quick_search(
+                result = self.graph_tools.quick_search(
                     graph_id=self.graph_id,
                     query=query,
                     limit=limit
@@ -1062,7 +1142,7 @@ class ReportAgent:
                 if isinstance(max_agents, str):
                     max_agents = int(max_agents)
                 max_agents = min(max_agents, 10)
-                result = self.zep_tools.interview_agents(
+                result = self.graph_tools.interview_agents(
                     simulation_id=self.simulation_id,
                     interview_requirement=interview_topic,
                     simulation_requirement=self.simulation_requirement,
@@ -1078,12 +1158,12 @@ class ReportAgent:
                 return self._execute_tool("quick_search", parameters, report_context)
             
             elif tool_name == "get_graph_statistics":
-                result = self.zep_tools.get_graph_statistics(self.graph_id)
+                result = self.graph_tools.get_graph_statistics(self.graph_id)
                 return json.dumps(result, ensure_ascii=False, indent=2)
             
             elif tool_name == "get_entity_summary":
                 entity_name = parameters.get("entity_name", "")
-                result = self.zep_tools.get_entity_summary(
+                result = self.graph_tools.get_entity_summary(
                     graph_id=self.graph_id,
                     entity_name=entity_name
                 )
@@ -1097,12 +1177,48 @@ class ReportAgent:
             
             elif tool_name == "get_entities_by_type":
                 entity_type = parameters.get("entity_type", "")
-                nodes = self.zep_tools.get_entities_by_type(
+                nodes = self.graph_tools.get_entities_by_type(
                     graph_id=self.graph_id,
                     entity_type=entity_type
                 )
                 result = [n.to_dict() for n in nodes]
                 return json.dumps(result, ensure_ascii=False, indent=2)
+
+            # ========== Simulation data tools (agent actions, trending, activity) ==========
+
+            elif tool_name == "get_simulation_actions":
+                from .simulation_data import get_simulation_data
+                svc = get_simulation_data()
+                platform = parameters.get("platform")
+                agent_name = parameters.get("agent_name")
+                action_type = parameters.get("action_type")
+                limit = int(parameters.get("limit", 30))
+                actions = svc.get_actions(self.simulation_id, platform, agent_name, action_type, limit)
+                return json.dumps(actions, ensure_ascii=False, indent=2)
+
+            elif tool_name == "get_trending_posts":
+                from .simulation_data import get_simulation_data
+                svc = get_simulation_data()
+                posts = svc.get_trending(self.simulation_id, int(parameters.get("min_engagement", 2)))
+                return json.dumps(posts, ensure_ascii=False, indent=2)
+
+            elif tool_name == "get_agent_activity":
+                from .simulation_data import get_simulation_data
+                svc = get_simulation_data()
+                activity = svc.get_agent_activity(self.simulation_id)
+                return json.dumps(activity, ensure_ascii=False, indent=2)
+
+            elif tool_name == "get_agent_posts":
+                from .simulation_data import get_simulation_data
+                svc = get_simulation_data()
+                posts = svc.get_content_posts(self.simulation_id, int(parameters.get("limit", 20)))
+                return json.dumps(posts, ensure_ascii=False, indent=2)
+
+            elif tool_name == "get_round_summary":
+                from .simulation_data import get_simulation_data
+                svc = get_simulation_data()
+                rounds = svc.get_round_summary(self.simulation_id)
+                return json.dumps(rounds, ensure_ascii=False, indent=2)
             
             else:
                 return f"Unknown tool: {tool_name}. Please use one of: insight_forge, panorama_search, quick_search"
@@ -1205,7 +1321,7 @@ class ReportAgent:
             progress_callback("planning", 0, t('progress.analyzingRequirements'))
         
         # 首先获取模拟上下文
-        context = self.zep_tools.get_simulation_context(
+        context = self.graph_tools.get_simulation_context(
             graph_id=self.graph_id,
             simulation_requirement=self.simulation_requirement
         )

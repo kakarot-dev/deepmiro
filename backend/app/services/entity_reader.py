@@ -346,7 +346,7 @@ class EntityReader:
 # ---------------------------------------------------------------------------
 # Backward-compatible aliases
 # ---------------------------------------------------------------------------
-# The old class name was ZepEntityReader. Keep it as an alias so callers
-# that import ``from .zep_entity_reader import ZepEntityReader`` still work
+# The old class name was EntityReader. Keep it as an alias so callers
+# that import ``from .entity_reader import EntityReader`` still work
 # after we update the zep_entity_reader.py shim.
-ZepEntityReader = EntityReader
+EntityReader = EntityReader

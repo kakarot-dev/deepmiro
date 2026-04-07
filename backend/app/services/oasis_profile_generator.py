@@ -22,7 +22,7 @@ from ..storage.factory import get_storage
 from ..storage.base import GraphStorage
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
-from .zep_entity_reader import EntityNode, ZepEntityReader
+from .entity_reader import EntityNode, EntityReader
 
 logger = get_logger('mirofish.oasis_profile')
 
