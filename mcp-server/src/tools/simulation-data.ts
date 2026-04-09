@@ -6,6 +6,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MirofishClient } from "../client/mirofish-client.js";
 import { toMcpError } from "../errors/index.js";
 
+const PAGE_SIZE = 50;
+
+function paginate<T>(items: T[], limit: number, offset: number): { items: T[]; total: number; offset: number; has_more: boolean } {
+  const sliced = items.slice(offset, offset + limit);
+  return { items: sliced, total: items.length, offset, has_more: offset + limit < items.length };
+}
+
 async function buildOverview(client: MirofishClient, simulationId: string): Promise<Record<string, unknown>> {
   const [sim, profiles, config, agentStats, timeline] = await Promise.all([
     client.getSimulation(simulationId).catch(() => null),
@@ -35,19 +42,18 @@ async function buildOverview(client: MirofishClient, simulationId: string): Prom
     } catch { /* graph not available */ }
   }
 
-  // Condense profiles to name + type + stance (not full bios)
-  const agents = (profiles as any[]).map((p: any, i: number) => ({
+  // Condense profiles to name + type + stance (first 50 only)
+  const allAgents = (profiles as any[]).map((p: any, i: number) => ({
     id: i,
     name: p.realname || p.name || p.username || `Agent ${i}`,
     type: p.entity_type || p.profession || "Unknown",
     stance: p.stance || p.persona?.slice(0, 80) || "",
   }));
 
-  // Condense config
   const timeConfig = (config as any)?.time_config;
   const entityTypes = (config as any)?.entity_types || (sim as any)?.entity_types || [];
 
-  // Condense timeline to first/middle/last rounds
+  // Condense timeline to 5 snapshots
   const tl = timeline as any[];
   const timelineSnapshot = tl.length <= 5 ? tl : [
     tl[0],
@@ -61,8 +67,9 @@ async function buildOverview(client: MirofishClient, simulationId: string): Prom
     simulation_id: simulationId,
     status: (sim as any)?.status ?? "unknown",
     entity_types: entityTypes,
-    agents_count: agents.length,
-    agents,
+    agents_count: allAgents.length,
+    agents: allAgents.slice(0, PAGE_SIZE),
+    agents_has_more: allAgents.length > PAGE_SIZE,
     simulation_config: timeConfig ? {
       total_hours: timeConfig.total_simulation_hours,
       minutes_per_round: timeConfig.minutes_per_round,
@@ -95,7 +102,8 @@ const inputSchema = {
     .describe("Filter by platform (for actions and posts)"),
   agent_name: z.string().optional().describe("Filter actions by agent name"),
   action_type: z.string().optional().describe("Filter actions by type (CREATE_POST, LIKE_POST, etc.)"),
-  limit: z.number().int().min(1).max(200).optional().describe("Max results (default 50)"),
+  limit: z.number().int().min(1).max(200).optional().describe("Max results per page (default 50)"),
+  offset: z.number().int().min(0).optional().describe("Offset for pagination (default 0)"),
 };
 
 export function registerSimulationData(server: McpServer, client: MirofishClient): void {
@@ -104,49 +112,68 @@ export function registerSimulationData(server: McpServer, client: MirofishClient
     {
       title: "Simulation Data",
       description:
-        "Access raw simulation data: agent profiles, configuration, action logs, " +
+        "Access simulation data: agent profiles, configuration, action logs, " +
         "social media posts, round-by-round timeline, per-agent activity stats, " +
-        "and interview history. Use this to inspect what happened during a simulation.",
+        "and interview history. Paginated — use offset to get more results when has_more is true.",
       inputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async (args) => {
       try {
         let data: unknown;
+        const limit = args.limit ?? PAGE_SIZE;
+        const offset = args.offset ?? 0;
 
         switch (args.data_type) {
           case "overview":
             data = await buildOverview(client, args.simulation_id);
             break;
-          case "profiles":
-            data = await client.getSimulationProfiles(args.simulation_id);
+
+          case "profiles": {
+            const all = await client.getSimulationProfiles(args.simulation_id);
+            data = paginate(all as any[], limit, offset);
             break;
+          }
+
           case "config":
             data = await client.getSimulationConfig(args.simulation_id);
             break;
-          case "actions":
-            data = await client.getSimulationActions(args.simulation_id, {
+
+          case "actions": {
+            const all = await client.getSimulationActions(args.simulation_id, {
               platform: args.platform,
               agent_name: args.agent_name,
               action_type: args.action_type,
-              limit: args.limit ?? 50,
+              limit: 500, // fetch more, paginate client-side
             });
+            data = paginate(all as any[], limit, offset);
             break;
-          case "posts":
+          }
+
+          case "posts": {
             data = await client.getSimulationPosts(args.simulation_id, {
               platform: args.platform,
-              limit: args.limit ?? 50,
+              limit,
+              offset,
             });
             break;
-          case "timeline":
-            data = await client.getSimulationTimeline(args.simulation_id);
+          }
+
+          case "timeline": {
+            const all = await client.getSimulationTimeline(args.simulation_id);
+            data = paginate(all as any[], limit, offset);
             break;
+          }
+
           case "agent_stats":
             data = await client.getAgentStats(args.simulation_id);
             break;
-          case "interview_history":
-            data = await client.getInterviewHistory(args.simulation_id);
+
+          case "interview_history": {
+            const all = await client.getInterviewHistory(args.simulation_id);
+            data = paginate(all as any[], limit, offset);
             break;
+          }
         }
 
         return {
