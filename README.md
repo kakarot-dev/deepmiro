@@ -136,12 +136,11 @@ deepmiro/
 │   └── pyproject.toml
 ├── mcp-server/          # TypeScript MCP server (npm: deepmiro-mcp)
 │   └── src/
-├── plugin/              # Agent configs — works with all AI clients
-│   ├── .claude-plugin/  # Claude Code manifest
-│   ├── .codex-plugin/   # OpenAI Codex manifest
-│   ├── .agents/         # Marketplace catalog
-│   ├── .mcp.json        # Universal MCP server config
-│   └── skills/predict/  # /predict skill (auto-setup, narration, interviews)
+├── .claude-plugin/      # Claude Code plugin + marketplace manifests
+├── .codex-plugin/       # OpenAI Codex plugin manifest
+├── .agents/             # Codex marketplace catalog
+├── .mcp.json            # MCP config (auto-loaded when running `claude` here)
+├── skills/predict/      # /predict skill (auto-setup, narration, interviews)
 ├── helm-chart/          # Kubernetes (k3s) deployment
 ├── docker/              # Dockerfiles + compose
 ├── docs/                # Landing page
