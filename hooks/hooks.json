@@ -1,0 +1,17 @@
+{
+  "description": "DeepMiro background notification — surfaces completed predictions without polling",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/check-predictions.sh",
+            "timeout": 7
+          }
+        ]
+      }
+    ]
+  }
+}
