@@ -27,6 +27,9 @@ export class MirofishClient {
   private maxRetries: number;
   private userContext?: AuthContext;
 
+  /** MCP server reference for sending notifications */
+  mcpServer?: import("@modelcontextprotocol/sdk/server/mcp.js").McpServer;
+
   /** In-memory pipeline state for pending simulations (projectId → tracker) */
   readonly pipelineTrackers = new Map<string, PipelineTracker>();
 
@@ -191,6 +194,9 @@ export class MirofishClient {
         // Report failure shouldn't fail the whole pipeline — sim data is still available
         if (tracker) tracker.phase = "completed";
       }
+
+      // Notify client that the prediction resource is ready
+      this.notifyPredictionReady(simState.simulation_id);
     } catch (err) {
       if (tracker) {
         tracker.phase = "failed";
@@ -548,6 +554,17 @@ export class MirofishClient {
       await new Promise((r) => setTimeout(r, 3000));
     }
     throw new MirofishBackendError(`Task ${taskId} timed out`, 504);
+  }
+
+  private notifyPredictionReady(simulationId: string): void {
+    if (!this.mcpServer) return;
+    try {
+      this.mcpServer.server.sendResourceUpdated({
+        uri: `prediction://${simulationId}`,
+      });
+    } catch {
+      // Client may not support resource subscriptions — ignore
+    }
   }
 
   private async pollSimulationUntilDone(simulationId: string, timeoutMs = 1_800_000): Promise<void> {
