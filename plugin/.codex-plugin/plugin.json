@@ -10,7 +10,7 @@
   "repository": "https://github.com/kakarot-dev/deepmiro",
   "license": "AGPL-3.0",
   "keywords": ["prediction", "ai-agents", "swarm-intelligence", "mcp", "simulation"],
-  "skills": "./plugin/skills/",
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "DeepMiro",

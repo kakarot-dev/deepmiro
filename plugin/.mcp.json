@@ -1,9 +1,11 @@
 {
-  "predict": {
-    "type": "http",
-    "url": "https://api.deepmiro.org/mcp",
-    "headers": {
-      "Authorization": "Bearer ${DEEPMIRO_API_KEY}"
+  "mcpServers": {
+    "deepmiro": {
+      "command": "npx",
+      "args": ["-y", "deepmiro-mcp"],
+      "env": {
+        "DEEPMIRO_API_KEY": "${DEEPMIRO_API_KEY}"
+      }
     }
   }
 }
