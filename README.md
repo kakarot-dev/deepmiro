@@ -44,20 +44,32 @@ Document ──► Entity Extraction ──► Agent Generation ──► Dual-P
 
 ## Quick Start
 
-### Hosted (recommended)
+### 1. Get an API key
 
-Get a free API key at [deepmiro.org](https://deepmiro.org), then connect from any AI client:
+Sign up at [deepmiro.org](https://deepmiro.org) → Dashboard → API Keys. Your key looks like `dm_xxxxxxxxx`.
+
+### 2. Install
+
+**Claude Code (plugin — recommended)** — one command gets you the `/predict` skill + the MCP server wired up:
+
+```bash
+claude plugin marketplace add kakarot-dev/deepmiro
+claude plugin install deepmiro@deepmiro-marketplace
+export DEEPMIRO_API_KEY=dm_your_key   # or set it in ~/.claude/settings.json
+```
+
+Then restart Claude Code and say `/predict` or `predict how people will react to [scenario]`.
+
+**Any other MCP client** — install the MCP server directly:
 
 | Client | Install |
 |--------|---------|
-| **Claude Code** | `claude mcp add deepmiro -e DEEPMIRO_API_KEY=dm_xxx -- npx -y deepmiro-mcp` |
+| **Claude Code (MCP only)** | `claude mcp add deepmiro -e DEEPMIRO_API_KEY=dm_xxx -- npx -y deepmiro-mcp` |
 | **OpenAI Codex** | `codex plugin install kakarot-dev/deepmiro` |
 | **Claude Desktop** | Add to `claude_desktop_config.json`: `"deepmiro": {"command": "npx", "args": ["-y", "deepmiro-mcp"], "env": {"DEEPMIRO_API_KEY": "dm_xxx"}}` |
 | **ChatGPT Desktop** | Settings → MCP Servers → Add → `npx deepmiro-mcp` with env `DEEPMIRO_API_KEY` |
 | **Cursor / Windsurf** | Settings → MCP → Add → `npx deepmiro-mcp` with env `DEEPMIRO_API_KEY` |
 | **VS Code (Copilot)** | Add to `.vscode/mcp.json`: `"deepmiro": {"command": "npx", "args": ["-y", "deepmiro-mcp"], "env": {"DEEPMIRO_API_KEY": "dm_xxx"}}` |
-
-Or just say "predict" in Claude Code or Codex — the built-in skill will walk you through setup.
 
 ### Self-host
 
