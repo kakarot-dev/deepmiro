@@ -13,59 +13,52 @@ Check if the `create_simulation` MCP tool exists and is callable.
 
 **If tools are NOT available (MCP disconnected):**
 
-Explain what DeepMiro does and offer setup. Keep it focused on outcomes, not how it works internally:
+Explain what DeepMiro does and offer to set it up:
 
 > **DeepMiro** predicts how people will react to things — policies, announcements, controversies, product launches.
 >
-> Instead of guessing, it creates real personas (journalists, critics, supporters, officials) and lets them debate your scenario. You get back:
+> It creates real personas (journalists, critics, supporters, officials) and lets them debate your scenario. You get back:
 > - **Who says what** — actual posts and reactions from each persona
 > - **How opinion shifts** — who gets convinced, who pushes back, what goes viral
 > - **A full analysis report** — with the key takeaways
-> - **The ability to ask any persona why** — interview them directly about their reasoning
+> - **The ability to ask any persona why** — interview them directly
 >
-> You can also upload documents (PDFs, reports) to ground the prediction in real data.
->
-> **To connect DeepMiro:**
-> 1. **Hosted** (recommended) — get your API key at https://deepmiro.org and paste it here
-> 2. **Self-hosted** — run locally with Docker
-> 3. **Manual** — I'll give you the commands
+> **I can set it up for you right now. Do you have a DeepMiro API key?**
+> Get one free at https://deepmiro.org → Dashboard → API Keys.
 
 Then wait for their response.
 
-### Auto-setup (if user provides API key or says self-hosted)
+### Auto-setup
 
-**If they provide an API key (any string, typically starts with `dm_`):**
+**If they provide an API key (starts with `dm_`):**
 
-Try to run:
+Run:
 ```bash
-claude mcp add deepmiro --transport http https://api.deepmiro.org/mcp -e DEEPMIRO_API_KEY=<their_key>
+claude mcp add deepmiro -e DEEPMIRO_API_KEY=<their_key> -- npx -y deepmiro-mcp
 ```
-
-Also try to install a standalone `/predict` skill so they can use the short name:
-```bash
-mkdir -p ~/.claude/skills/predict
-```
-Then write `~/.claude/skills/predict/SKILL.md` with this same skill content.
 
 **If they say self-hosted:**
 
-Ask for their backend URL (default: `http://localhost:3001/mcp`), then:
+Ask for their engine URL (default: `http://localhost:5001`), then:
 ```bash
-claude mcp add deepmiro --transport http <url>
+claude mcp add deepmiro -e MIROFISH_URL=<their_url> -- npx -y deepmiro-mcp
 ```
 
-### If user denies permissions or chooses manual:
+**If they don't know / want help:**
 
-Give them copy-paste commands:
+Walk them through it:
+1. "Go to https://deepmiro.org and create an account"
+2. "Go to Dashboard → API Keys and create a new key"
+3. "Paste the key here and I'll connect everything"
+
+**If they're not using Claude Code** (ChatGPT, Cursor, VS Code, etc.):
+
+Give the universal install:
 > Run this in your terminal:
 > ```bash
-> # Hosted:
-> claude mcp add deepmiro --transport http https://api.deepmiro.org/mcp -e DEEPMIRO_API_KEY=dm_your_key
->
-> # Or self-hosted:
-> claude mcp add deepmiro --transport http http://localhost:3001/mcp
+> DEEPMIRO_API_KEY=dm_your_key npx deepmiro-mcp
 > ```
-> Then restart Claude Code.
+> Then add `npx deepmiro-mcp` as an MCP server in your client's settings.
 
 ### After any setup path:
 
