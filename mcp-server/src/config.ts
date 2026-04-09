@@ -5,7 +5,8 @@ import { z } from "zod";
 import type { MirofishConfig } from "./types/index.js";
 
 const envSchema = z.object({
-  MIROFISH_URL: z.string().url().default("http://localhost:5001"),
+  MIROFISH_URL: z.string().url().default("https://deepmiro.org"),
+  DEEPMIRO_API_KEY: z.string().optional(),
   LLM_API_KEY: z.string().optional(),
   MCP_API_KEY: z.string().optional(),
   ORIGIN_SECRET: z.string().optional(),
@@ -20,6 +21,7 @@ export function loadConfig(): MirofishConfig {
   return {
     mirofishUrl: parsed.MIROFISH_URL,
     llmApiKey: parsed.LLM_API_KEY ?? "",
+    deepmiroApiKey: parsed.DEEPMIRO_API_KEY,
     mcpApiKey: parsed.MCP_API_KEY,
     originSecret: parsed.ORIGIN_SECRET,
     transport: parsed.TRANSPORT,

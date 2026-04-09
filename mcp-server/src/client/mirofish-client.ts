@@ -42,8 +42,11 @@ export class MirofishClient {
       // (FormData needs multipart/form-data with boundary, JSON needs application/json)
     });
 
-    // Inject user context headers on every request when set
+    // Inject auth + user context headers on every request
     this.http.interceptors.request.use((reqConfig) => {
+      if (config.deepmiroApiKey) {
+        reqConfig.headers["Authorization"] = `Bearer ${config.deepmiroApiKey}`;
+      }
       if (this.userContext) {
         reqConfig.headers["X-User-Id"] = this.userContext.userId;
         reqConfig.headers["X-User-Tier"] = this.userContext.tier;

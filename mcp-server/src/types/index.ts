@@ -4,6 +4,7 @@
 export interface MirofishConfig {
   mirofishUrl: string;
   llmApiKey: string;
+  deepmiroApiKey?: string;
   mcpApiKey?: string;
   originSecret?: string;
   transport: "stdio" | "http";
