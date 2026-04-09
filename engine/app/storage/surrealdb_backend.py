@@ -860,6 +860,7 @@ class SurrealDBStorage(GraphStorage):
                 entity_types: $entity_types,
                 config_json: $config_json,
                 error: $error,
+                user_id: $user_id,
                 created_at: time::now(),
                 updated_at: time::now()
             };
@@ -876,9 +877,14 @@ class SurrealDBStorage(GraphStorage):
                 "entity_types": sim_data.get("entity_types", []),
                 "config_json": sim_data.get("config_json", "{}"),
                 "error": sim_data.get("error"),
+                "user_id": sim_data.get("user_id"),
             },
         )
-        logger.info("Created simulation record: %s", sim_id)
+        logger.info(
+            "Created simulation record: %s (user_id=%s)",
+            sim_id,
+            sim_data.get("user_id") or "none",
+        )
         return sim_id
 
     def get_simulation(self, simulation_id: str) -> Optional[Dict[str, Any]]:
