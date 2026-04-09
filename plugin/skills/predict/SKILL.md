@@ -107,15 +107,9 @@ If a file path is in $ARGUMENTS or the user referenced a file:
      > "DeepMiro accepts PDF, Markdown, or plain text files. Can you convert it?"
 
 2. **Upload the file:**
-   - Try the `upload_document` MCP tool first with the file path
-   - If it fails (ENOENT, remote mode, etc.), upload via curl directly:
-     ```bash
-     curl -sf -X POST "https://api.deepmiro.org/api/documents/upload" \
-       -H "Authorization: Bearer $DEEPMIRO_API_KEY" \
-       -F "file=@/path/to/file.pdf"
-     ```
-     For self-hosted users, replace the URL with their `MIROFISH_URL`.
-   - Extract `document_id` from the JSON response (`data.document_id`)
+   - Call the `upload_document` MCP tool with the absolute file path
+   - It reads the file locally and uploads to the backend, returning a `document_id`
+   - Pass that `document_id` to `create_simulation` in the next step
 
 3. Tell user: "Uploaded your document — I'll use it to build the knowledge graph."
 
@@ -202,7 +196,7 @@ If user wants to talk to a persona:
 ## Rules
 
 - **Names, never IDs** — say "Prof. Zhang" not "Agent_34" or "agent_id: 7"
-- **File uploads** — try `upload_document` MCP tool first. If it fails (remote mode), use curl to upload directly. Always pass `document_id` to `create_simulation`, never base64
+- **File uploads** — always use `upload_document` MCP tool first, pass the returned `document_id` to `create_simulation`. Never base64 encode files in prompts.
 - **Error recovery** — if simulation fails, offer to retry with a smaller preset
 - **Quick predict** — if user just wants a fast take without a full simulation, use `quick_predict` and mention the full sim is available for deeper analysis
 - **Be conversational** — narrate the simulation like you're watching it unfold, not reading logs
