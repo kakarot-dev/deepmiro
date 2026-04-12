@@ -14,7 +14,8 @@
       "command": "npx",
       "args": ["-y", "deepmiro-mcp"],
       "env": {
-        "DEEPMIRO_API_KEY": "${DEEPMIRO_API_KEY}"
+        "DEEPMIRO_API_KEY": "${DEEPMIRO_API_KEY}",
+        "MIROFISH_URL": "${MIROFISH_URL}"
       }
     }
   }
