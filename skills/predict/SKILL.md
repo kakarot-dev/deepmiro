@@ -33,53 +33,38 @@ Then wait for their response.
 
 **If they provide an API key (starts with `dm_`):**
 
-Use the Write tool to create/update `.mcp.json` in the user's current project root. This is the fastest path — connects immediately, no restart needed:
+The DeepMiro plugin's MCP config uses `${DEEPMIRO_API_KEY}` — a shell env var interpolation. You need to set that env var in a place Claude Code will pick up on its next start. The cleanest place is `~/.claude/settings.json` under the `env` field.
 
-```json
-{
-  "mcpServers": {
-    "deepmiro": {
-      "command": "npx",
-      "args": ["-y", "deepmiro-mcp"],
-      "env": {
-        "DEEPMIRO_API_KEY": "<their_key>"
-      }
-    }
-  }
-}
-```
+Steps:
+1. Read `~/.claude/settings.json` using the Read tool
+2. Parse the JSON
+3. Add or update the `env` field:
+   ```json
+   "env": {
+     "DEEPMIRO_API_KEY": "<their_key>"
+   }
+   ```
+   (preserve any existing `env` entries — merge, don't overwrite)
+4. Write the updated settings.json back
+5. Tell the user:
+   > "API key saved to your Claude Code settings. **Restart Claude Code now** — exit and run `claude` again. After restart, the DeepMiro tools will be available."
 
-If `.mcp.json` already exists, read it first and merge the `deepmiro` entry into the existing `mcpServers` object — don't overwrite other servers.
-
-**Alternative — install the full plugin (persistent across all projects):**
-
-If the user asks for a more permanent install, tell them:
-> Run this once and DeepMiro will be available in every project:
+**If they don't have the plugin installed yet**, tell them:
+> Run this once to install the plugin:
 > ```bash
 > claude plugin marketplace add kakarot-dev/deepmiro
 > claude plugin install deepmiro@deepmiro-marketplace
-> export DEEPMIRO_API_KEY=dm_your_key   # add to ~/.zshrc or ~/.bashrc
 > ```
-> Then restart Claude Code.
+> Then I'll save your API key to settings and you restart Claude Code.
 
 **If they say self-hosted:**
 
-Ask for their engine URL (default: `http://localhost:5001`), then write the same config but with `MIROFISH_URL` instead:
-
+Ask for their engine URL (default: `http://localhost:5001`). Read `~/.claude/settings.json`, update the `env` field:
 ```json
-{
-  "mcpServers": {
-    "deepmiro": {
-      "command": "npx",
-      "args": ["-y", "deepmiro-mcp"],
-      "env": {
-        "MIROFISH_URL": "<their_url>"
-      }
-    }
-  }
+"env": {
+  "MIROFISH_URL": "<their_url>"
 }
 ```
-
 Self-hosters don't need an API key.
 
 **If they don't know / want help:**
@@ -87,13 +72,13 @@ Self-hosters don't need an API key.
 Walk them through it:
 1. "Go to https://deepmiro.org and create a free account"
 2. "Go to Dashboard → API Keys and create a new key"
-3. "Paste the key here and I'll connect everything"
+3. "Paste the key here and I'll save it to your Claude Code settings"
 
 ### After setup:
 
-> "Done — DeepMiro is connected. Say **'predict [your scenario]'** to run your first prediction."
+> "Done — API key saved. **Please restart Claude Code** (exit and run `claude` again) so the DeepMiro plugin can pick up your key. Then say **'predict [your scenario]'**."
 
-Then immediately retry `list_simulations` to verify the connection works. If it fails, check the key and offer to fix the config.
+**Important:** Do NOT try to call the MCP tools in this same session — they won't work until Claude Code restarts and respawns the plugin's MCP server with the new env var.
 
 ---
 
