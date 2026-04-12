@@ -558,6 +558,10 @@ class AgentPager:
         # Cache of stripped base persona prose, keyed by agent_id.
         # Populated once via cache_base_personas before the first round.
         self._base_persona: Dict[int, str] = {}
+        # Track which agents have logged their first persona rebuild (info
+        # level, once per agent) so we have proof the rebuild actually ran
+        # without spamming every round.
+        self._logged_first_rebuild: Set[int] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -655,6 +659,17 @@ class AgentPager:
                 self._restore_memory(agent, records_json)
 
             # ── Option D: rebuild system_message.content ──
+            #
+            # CAMEL's ChatAgent seeds system_message into agent.memory via
+            # init_messages() at construction. The LLM context comes from
+            # memory, NOT from the system_message property. So mutating
+            # agent.system_message.content in place does NOTHING — the old
+            # content is already baked into memory records.
+            #
+            # Correct fix: build a fresh BaseMessage, assign it to the
+            # private _system_message attribute, then call init_messages()
+            # to clear memory and re-seed with the new system message.
+            # This is what CAMEL's own output_language.setter does.
             if self._persona_builder is not None and hasattr(agent, "system_message"):
                 try:
                     agent_name = self._agent_names.get(
@@ -668,9 +683,18 @@ class AgentPager:
                         recent_own_actions=own_actions.get(aid, []),
                         platform_suffix=self._platform_suffix,
                     )
-                    agent.system_message.content = new_content
+                    rebuilt = self._replace_system_message(agent, new_content)
+                    if rebuilt and aid not in self._logged_first_rebuild:
+                        logger.info(
+                            "AgentPager[%s]: first persona rebuild for "
+                            "agent %d (%s), content=%d chars, "
+                            "preview=%r",
+                            self._platform, aid, agent_name,
+                            len(new_content), new_content[:120],
+                        )
+                        self._logged_first_rebuild.add(aid)
                 except Exception as exc:
-                    logger.debug(
+                    logger.warning(
                         "AgentPager: persona rebuild failed for %d: %s",
                         aid, exc,
                     )
@@ -682,6 +706,52 @@ class AgentPager:
             len(agent_ids), self._platform,
             self._persona_builder is not None,
         )
+
+    @staticmethod
+    def _replace_system_message(agent, new_content: str) -> bool:
+        """Replace an agent's system message and re-seed memory.
+
+        Returns True if the replacement was applied, False otherwise.
+        The LLM context in CAMEL's ChatAgent is derived from agent.memory,
+        which is populated from system_message at init_messages() time.
+        We must therefore both replace the system message AND re-run
+        init_messages() for the change to reach the LLM.
+        """
+        try:
+            from camel.messages import BaseMessage as _BaseMessage
+        except Exception:
+            return False
+
+        try:
+            new_sys_msg = _BaseMessage.make_assistant_message(
+                role_name="system",
+                content=new_content,
+            )
+        except Exception:
+            return False
+
+        # Replace both _system_message and _original_system_message so that
+        # CAMEL's reset_to_original_system_message() (if ever called) does
+        # not revert to the pre-Option-D prose.
+        try:
+            agent._system_message = new_sys_msg
+        except Exception:
+            return False
+        if hasattr(agent, "_original_system_message"):
+            try:
+                agent._original_system_message = new_sys_msg
+            except Exception:
+                pass
+
+        # init_messages() clears memory and writes the new system message
+        # as the first record. Any accumulated chat history from previous
+        # rounds is wiped — exactly what Option D wants.
+        if hasattr(agent, "init_messages"):
+            try:
+                agent.init_messages()
+            except Exception:
+                return False
+        return True
 
     def evict_all(self, agent_graph) -> None:
         """Save memory for hydrated agents, then clear it."""
