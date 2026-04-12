@@ -14,20 +14,11 @@ Check if the `create_simulation` MCP tool exists and is callable.
 
 **If tools are NOT available (MCP disconnected):**
 
-Explain what DeepMiro does and offer to set it up:
+Say only this (short, one block):
 
-> **DeepMiro** predicts how people will react to things — policies, announcements, controversies, product launches.
->
-> It creates real personas (journalists, critics, supporters, officials) and lets them debate your scenario. You get back:
-> - **Who says what** — actual posts and reactions from each persona
-> - **How opinion shifts** — who gets convinced, who pushes back, what goes viral
-> - **A full analysis report** — with the key takeaways
-> - **The ability to ask any persona why** — interview them directly
->
-> **I can set it up for you right now. Do you have a DeepMiro API key?**
-> Get one free at https://deepmiro.org → Dashboard → API Keys.
+> DeepMiro simulates how real personas react to a scenario. Not set up yet — paste your API key (get one at https://deepmiro.org) or say "install it" for setup instructions.
 
-Then wait for their response.
+Then wait. Do NOT explain what the simulation would contain, do NOT offer a "quick take", do NOT describe the stakeholders. Keep it under 40 words.
 
 ### Auto-setup
 
