@@ -13,7 +13,7 @@ import os
 import json
 import time
 import re
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Set, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -696,6 +696,48 @@ Prediction Scenario (Simulation Requirement): {simulation_requirement}
 Current section to write: {section_title}
 
 ===============================================================
+[CRITICAL — Agent Allowlist]
+===============================================================
+
+The simulation contains EXACTLY the agents listed below. These are the ONLY \
+agents that exist in this simulated world. You are FORBIDDEN from:
+
+- Attributing any quote to a name not on this list
+- Inventing agents that sound plausible for the scenario (e.g., JBS, Bishop \
+John Doe, a Senator Smith) just because they fit the topic
+- Confusing entities mentioned in the scenario text with agents that \
+actually participated (the scenario text is a prompt; only the agents on \
+this list actually spoke in the simulation)
+
+{agent_allowlist}
+
+If your retrieval tools surface a quote with an attribution NOT on this list, \
+it means the tool output is corrupted or you are misreading an entity \
+reference as an agent. Re-run the tool with the correct filter, or pick a \
+different quote from a real agent.
+
+===============================================================
+[CRITICAL — No Invented Numerical Data]
+===============================================================
+
+You are FORBIDDEN from inventing:
+
+- Percentages (e.g., "20% drop", "3-5% increase", "10-15% rise")
+- Currency figures (e.g., "$0.15 per pound", "2.5x wages")
+- Stock movements (e.g., "fell 4%", "downgraded Q2 outlook")
+- Specific counts, dates, or magnitudes not present in retrieved tool output
+
+If the simulation data does not contain a specific number, use QUALITATIVE \
+language instead:
+
+- "significant decline" (not "20% drop")
+- "elevated costs" (not "$0.15 per pound increase")
+- "market anxiety" (not "4% stock drop")
+
+Every numerical claim in your output must trace back to a verbatim figure \
+in a tool result. When in doubt, omit the number.
+
+===============================================================
 [Core Philosophy]
 ===============================================================
 
@@ -1037,8 +1079,275 @@ class ReportAgent:
         self.report_logger: Optional[ReportLogger] = None
         # 控制台日志记录器（在 generate_report 中初始化）
         self.console_logger: Optional[ReportConsoleLogger] = None
-        
+
+        # Anti-hallucination: canonical agent allowlist loaded lazily from
+        # profile files in the simulation directory. Injected into section
+        # prompts so the LLM is told which agents exist.
+        self._agent_allowlist: Optional[Set[str]] = None
+        # Anti-hallucination: per-agent action contents keyed by canonical
+        # agent name. Built lazily from simulation_action logs. Used to
+        # verify that every extracted blockquote is a real substring of a
+        # real action by the attributed agent.
+        self._agent_action_content: Optional[Dict[str, List[str]]] = None
+
         logger.info(t('report.agentInitDone', graphId=graph_id, simulationId=simulation_id))
+
+    # ------------------------------------------------------------------
+    # Anti-hallucination helpers
+    # ------------------------------------------------------------------
+
+    def _load_agent_allowlist(self) -> Set[str]:
+        """Return the canonical set of agent display names for this sim.
+
+        Reads name fields from reddit_profiles.json, reddit_profiles_struct.json,
+        twitter_profiles.csv, and twitter_profiles_struct.json (whichever
+        exist) in the simulation directory. Cached on self._agent_allowlist.
+        """
+        if self._agent_allowlist is not None:
+            return self._agent_allowlist
+
+        import csv
+        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, self.simulation_id)
+        names: Set[str] = set()
+
+        # reddit_profiles.json: list of dicts with "name"
+        for fname in ("reddit_profiles.json", "reddit_profiles_struct.json", "twitter_profiles_struct.json"):
+            path = os.path.join(sim_dir, fname)
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    for p in data:
+                        if isinstance(p, dict):
+                            n = p.get("name")
+                            if isinstance(n, str) and n.strip():
+                                names.add(n.strip())
+            except Exception as exc:
+                logger.warning("Failed to load %s for agent allowlist: %s", fname, exc)
+
+        # twitter_profiles.csv: CSV with a "name" or similar column
+        tw_csv = os.path.join(sim_dir, "twitter_profiles.csv")
+        if os.path.exists(tw_csv):
+            try:
+                with open(tw_csv, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        n = row.get("name") or row.get("display_name") or row.get("username")
+                        if isinstance(n, str) and n.strip():
+                            names.add(n.strip())
+            except Exception as exc:
+                logger.warning("Failed to load twitter_profiles.csv: %s", exc)
+
+        self._agent_allowlist = names
+        logger.info(
+            "ReportAgent: loaded %d canonical agent names for sim %s",
+            len(names), self.simulation_id,
+        )
+        return names
+
+    def _format_agent_allowlist_for_prompt(self) -> str:
+        """Return a prompt-ready bullet list of real agent names."""
+        allowlist = self._load_agent_allowlist()
+        if not allowlist:
+            return "(agent allowlist unavailable — cite ONLY agents whose names appear in retrieved tool results)"
+        ordered = sorted(allowlist, key=lambda s: s.lower())
+        return "\n".join(f"- {n}" for n in ordered)
+
+    def _load_agent_action_content(self) -> Dict[str, List[str]]:
+        """Build {canonical_agent_name: [action_content, ...]} for this sim.
+
+        Loads every CREATE_POST / CREATE_COMMENT / QUOTE_POST from the
+        simulation's action logs via the existing simulation_data service
+        and indexes them by the canonical agent name from the allowlist.
+        Cached on self._agent_action_content.
+        """
+        if self._agent_action_content is not None:
+            return self._agent_action_content
+
+        from .simulation_data import get_simulation_data
+        svc = get_simulation_data()
+
+        content_by_agent: Dict[str, List[str]] = {}
+        canonical_by_lower = {n.lower(): n for n in self._load_agent_allowlist()}
+
+        try:
+            # Pull all content-producing actions across both platforms.
+            actions = svc.get_actions(
+                self.simulation_id,
+                action_type=None,
+                limit=5000,
+            )
+        except Exception as exc:
+            logger.warning("ReportAgent: get_actions for validation failed: %s", exc)
+            actions = []
+
+        content_types = {"CREATE_POST", "CREATE_COMMENT", "QUOTE_POST"}
+        for a in actions:
+            if a.get("action_type") not in content_types:
+                continue
+            raw_name = (a.get("agent_name") or "").strip()
+            if not raw_name:
+                continue
+
+            # Map action agent_name → canonical allowlist name. The action
+            # log may carry the display name or a username; fuzzy match to
+            # pick the right canonical bucket.
+            canonical = canonical_by_lower.get(raw_name.lower())
+            if canonical is None:
+                lower = raw_name.lower()
+                for al_lower, al_canon in canonical_by_lower.items():
+                    if al_lower in lower or lower in al_lower:
+                        canonical = al_canon
+                        break
+            if canonical is None:
+                canonical = raw_name  # Unknown — bucket under the raw name
+
+            # Extract content text from action_args; field name varies by
+            # action type (content / post_content / quote_content).
+            args = a.get("action_args") or {}
+            text = (
+                args.get("content")
+                or args.get("post_content")
+                or args.get("quote_content")
+                or args.get("original_content")
+                or ""
+            )
+            if isinstance(text, str) and text.strip():
+                content_by_agent.setdefault(canonical, []).append(text.strip())
+
+        self._agent_action_content = content_by_agent
+        logger.info(
+            "ReportAgent: indexed content actions for %d agents (sim %s)",
+            len(content_by_agent), self.simulation_id,
+        )
+        return content_by_agent
+
+    @staticmethod
+    def _normalize_for_match(s: str) -> str:
+        """Lowercase, collapse whitespace, drop smart punctuation for
+        substring comparison. Used to check whether a quoted fragment
+        appears inside a real action body."""
+        s = s.replace("\u201c", '"').replace("\u201d", '"')
+        s = s.replace("\u2018", "'").replace("\u2019", "'")
+        s = s.replace("\u2014", "-").replace("\u2013", "-")
+        s = re.sub(r"\s+", " ", s)
+        return s.strip().lower()
+
+    # Blockquote + attribution extractor. Matches whole lines of the form:
+    #     > "quoted text" — Agent Name (Platform)
+    # Smart quotes and en/em dashes are tolerated. The attribution must be
+    # on the same line as its quote — multi-line blockquotes would need a
+    # different extractor and have not been observed in ReportAgent output.
+    _BLOCKQUOTE_ATTR_LINE = re.compile(
+        r'(?P<pre>^\s*>\s*[\"\u201c])'
+        r'(?P<quote>[^\"\u201d\n]+)'
+        r'(?P<mid>[\"\u201d]\s*[\u2014\u2013—–-]\s*)'
+        r'(?P<name>[^(\n]+?)'
+        r'(?P<platform>\s*\((?:Twitter|Reddit|twitter|reddit)\))?'
+        r'(?P<post>\s*)$',
+        re.MULTILINE,
+    )
+
+    def _canonicalize_agent_name(self, raw: str) -> Optional[str]:
+        """Map a raw attribution name to an allowlist canonical name.
+        Returns None if no match — caller treats that as hallucinated."""
+        if not raw:
+            return None
+        canonical_by_lower = {n.lower(): n for n in self._load_agent_allowlist()}
+        raw = raw.strip().strip("*").strip('"').strip()
+        lower = raw.lower()
+        if lower in canonical_by_lower:
+            return canonical_by_lower[lower]
+        best, best_len = None, 0
+        for al_lower, al_canon in canonical_by_lower.items():
+            if al_lower in lower or lower in al_lower:
+                if len(al_lower) > best_len:
+                    best, best_len = al_canon, len(al_lower)
+        return best
+
+    def _validate_quote_attributions(self, content: str) -> Tuple[str, List[str]]:
+        """Verify each blockquote attribution against real action content.
+
+        For every `> "quote" — Name (Platform)` line in the markdown:
+
+        1. Map Name to a canonical allowlist agent. If no match, the agent
+           is fabricated — drop the whole line.
+        2. Look up that agent's real action contents. If the normalized
+           quoted text is not a substring of ANY of them, the quote is
+           fabricated (made-up quote from a real agent, or cross-attributed
+           from a different agent) — drop the whole line.
+
+        Dropping the whole line is stricter than stripping just the
+        attribution: an orphaned blockquote with no source would look like
+        narrator voice and still mislead the reader. Cleaner to remove it
+        entirely — the surrounding analysis prose is unaffected.
+
+        Returns (cleaned_content, list_of_problems) where each problem
+        entry is `"<reason>:<raw_name>"` for logging.
+        """
+        allowlist = self._load_agent_allowlist()
+        if not allowlist:
+            return content, []
+
+        content_index = self._load_agent_action_content()
+        # Pre-normalize action bodies once so repeated substring checks
+        # across a multi-quote section don't re-normalize the same text.
+        normalized_index: Dict[str, List[str]] = {
+            name: [self._normalize_for_match(body) for body in bodies]
+            for name, bodies in content_index.items()
+        }
+
+        problems: List[str] = []
+
+        def _check(m: "re.Match[str]") -> Optional[str]:
+            """Return None to drop the matched line, or the rewritten line."""
+            raw_name = m.group("name")
+            canonical = self._canonicalize_agent_name(raw_name)
+            quote_text = m.group("quote")
+            normalized_quote = self._normalize_for_match(quote_text)
+
+            if canonical is None:
+                problems.append(f"fake_agent:{raw_name.strip()}")
+                return None
+
+            bodies = normalized_index.get(canonical, [])
+            if not any(normalized_quote in body for body in bodies):
+                problems.append(f"fake_quote:{canonical}")
+                return None
+
+            # Valid — rewrite with canonical name, preserve platform tag.
+            platform = (m.group("platform") or "").strip()
+            return (
+                f'{m.group("pre")}{quote_text}{m.group("mid")}'
+                f'{canonical}{(" " + platform) if platform else ""}'
+            )
+
+        # Walk line-by-line so we can drop entire bad blockquote lines.
+        out_lines: List[str] = []
+        for line in content.split("\n"):
+            m = self._BLOCKQUOTE_ATTR_LINE.match(line)
+            if m is None:
+                out_lines.append(line)
+                continue
+            replacement = _check(m)
+            if replacement is None:
+                # Drop the whole blockquote line.
+                continue
+            out_lines.append(replacement)
+        cleaned = "\n".join(out_lines)
+
+        # Collapse runs of blank lines that may have been left behind by
+        # dropped quote lines (keeps markdown clean).
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+        if problems:
+            logger.warning(
+                "ReportAgent: dropped %d bad blockquote lines: %s",
+                len(problems), problems,
+            )
+        return cleaned, problems
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """定义可用工具"""
@@ -1453,6 +1762,7 @@ class ReportAgent:
             simulation_requirement=self.simulation_requirement,
             section_title=section.title,
             tools_description=self._get_tools_description(),
+            agent_allowlist=self._format_agent_allowlist_for_prompt(),
         )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
 
@@ -1588,6 +1898,18 @@ class ReportAgent:
                 final_answer = response.split("Final Answer:")[-1].strip()
                 # Strip any leaked tool call markup from the final answer
                 final_answer = re.sub(r'<tool_call>.*?</tool_call>', '', final_answer, flags=re.DOTALL).strip()
+
+                # Anti-hallucination pass: strip attributions referring to
+                # agents that don't exist in this simulation (e.g., JBS,
+                # Bishop John Doe). Fuzzy-matched to canonical names where
+                # possible so minor variants are preserved.
+                final_answer, hallucinated_names = self._validate_quote_attributions(final_answer)
+                if hallucinated_names:
+                    logger.warning(
+                        "ReportAgent: section '%s' had %d hallucinated agent attributions stripped: %s",
+                        section.title, len(hallucinated_names), hallucinated_names,
+                    )
+
                 logger.info(t('report.sectionGenDone', title=section.title, count=tool_calls_count))
 
                 if self.report_logger:
@@ -1688,6 +2010,13 @@ class ReportAgent:
             logger.info(t('report.sectionNoPrefix', title=section.title, count=tool_calls_count))
             final_answer = re.sub(r'<tool_call>.*?</tool_call>', '', response, flags=re.DOTALL).strip()
 
+            final_answer, hallucinated_names = self._validate_quote_attributions(final_answer)
+            if hallucinated_names:
+                logger.warning(
+                    "ReportAgent: section '%s' (no-prefix path) stripped %d hallucinated attributions: %s",
+                    section.title, len(hallucinated_names), hallucinated_names,
+                )
+
             if self.report_logger:
                 self.report_logger.log_section_content(
                     section_title=section.title,
@@ -1719,7 +2048,14 @@ class ReportAgent:
         # Strip any leaked tool call markup
         if final_answer:
             final_answer = re.sub(r'<tool_call>.*?</tool_call>', '', final_answer, flags=re.DOTALL).strip()
-        
+
+            final_answer, hallucinated_names = self._validate_quote_attributions(final_answer)
+            if hallucinated_names:
+                logger.warning(
+                    "ReportAgent: section '%s' (force-close path) stripped %d hallucinated attributions: %s",
+                    section.title, len(hallucinated_names), hallucinated_names,
+                )
+
         # 记录章节内容生成完成日志
         if self.report_logger:
             self.report_logger.log_section_content(
@@ -1728,7 +2064,7 @@ class ReportAgent:
                 content=final_answer,
                 tool_calls_count=tool_calls_count
             )
-        
+
         return final_answer
     
     def generate_report(
