@@ -67,7 +67,11 @@ export interface SimulationState {
 
 export interface SimulationRunStatus {
   simulation_id: string;
-  status: string;
+  status?: string;
+  // Backend /run-status and /stop both return runner_status from
+  // SimulationRunState.to_dict() — not "status". Older code in this
+  // client was reading "status" which isn't actually on that payload.
+  runner_status?: string;
   current_round: number;
   total_rounds: number;
   twitter_running: boolean;
@@ -76,8 +80,12 @@ export interface SimulationRunStatus {
   reddit_actions_count: number;
   twitter_current_round: number;
   reddit_current_round: number;
-  progress_percentage: number;
-  recent_actions: AgentAction[];
+  progress_percentage?: number;
+  progress_percent?: number;
+  completed_at?: string | null;
+  started_at?: string | null;
+  error?: string | null;
+  recent_actions?: AgentAction[];
 }
 
 export interface AgentAction {

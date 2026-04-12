@@ -12,6 +12,7 @@ import { registerSearchSimulations } from "./search-simulations.js";
 import { registerQuickPredict } from "./quick-predict.js";
 import { registerUploadDocument } from "./upload-document.js";
 import { registerSimulationData } from "./simulation-data.js";
+import { registerCancelSimulation } from "./cancel-simulation.js";
 
 export function registerAllTools(server: McpServer, client: MirofishClient): void {
   registerCreateSimulation(server, client);
@@ -23,4 +24,5 @@ export function registerAllTools(server: McpServer, client: MirofishClient): voi
   registerQuickPredict(server, client);
   registerUploadDocument(server, client);
   registerSimulationData(server, client);
+  registerCancelSimulation(server, client);
 }

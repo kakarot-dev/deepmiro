@@ -221,6 +221,18 @@ export class MirofishClient {
     return resp.data;
   }
 
+  async cancelSimulation(simulationId: string): Promise<SimulationRunStatus> {
+    // Backend /stop SIGTERMs the subprocess and marks the outer state
+    // as STOPPED. We expose it under "cancel" in MCP because "stop"
+    // typically implies something more graceful than what actually
+    // happens (immediate process termination, partial action log).
+    const resp = await this.post<SimulationRunStatus>("/api/simulation/stop", {
+      simulation_id: simulationId,
+    });
+    if (!resp.data) throw new SimulationNotFoundError(simulationId);
+    return resp.data;
+  }
+
   async listSimulations(limit = 20): Promise<{ simulations: SimulationSummary[]; total: number }> {
     const resp = await this.get<SimulationSummary[]>("/api/simulation/history", { limit });
     return { simulations: resp.data ?? [], total: resp.count ?? 0 };
@@ -242,19 +254,22 @@ export class MirofishClient {
   // Reports
   // ------------------------------------------------------------------
 
-  async getOrGenerateReport(simulationId: string): Promise<Report> {
-    // Check if report already exists
-    try {
-      const resp = await this.get<Report>(`/api/report/by-simulation/${simulationId}`);
-      if (resp.data && resp.data.status === "completed") return resp.data;
-    } catch {
-      // No existing report — generate one
+  async getOrGenerateReport(simulationId: string, forceRegenerate = false): Promise<Report> {
+    // Check if report already exists — skip this fast-path when the
+    // caller explicitly wants a fresh generation.
+    if (!forceRegenerate) {
+      try {
+        const resp = await this.get<Report>(`/api/report/by-simulation/${simulationId}`);
+        if (resp.data && resp.data.status === "completed") return resp.data;
+      } catch {
+        // No existing report — generate one
+      }
     }
 
     // Trigger generation
     const genResp = await this.post<{ report_id: string; task_id: string; already_generated: boolean }>(
       "/api/report/generate",
-      { simulation_id: simulationId },
+      { simulation_id: simulationId, force_regenerate: forceRegenerate },
     );
 
     if (genResp.data?.already_generated && genResp.data.report_id) {

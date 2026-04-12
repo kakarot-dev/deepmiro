@@ -8,6 +8,14 @@ import { toMcpError } from "../errors/index.js";
 
 const inputSchema = {
   simulation_id: z.string().describe("The simulation ID to generate/fetch a report for"),
+  force_regenerate: z.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "If true, invalidates any cached report and runs a fresh ReportAgent pass. " +
+      "Useful after backend prompt or validator changes. Off by default — reports " +
+      "are cached once generated, so repeat calls are free.",
+    ),
 };
 
 export function registerGetReport(server: McpServer, client: MirofishClient): void {
@@ -18,13 +26,17 @@ export function registerGetReport(server: McpServer, client: MirofishClient): vo
       description:
         "Generate and retrieve the prediction report for a completed simulation. " +
         "If the report hasn't been generated yet, triggers generation (may take 1-3 minutes). " +
-        "Returns a detailed markdown analysis ready to display as an artifact in the side panel.",
+        "Returns a detailed markdown analysis ready to display as an artifact in the side panel. " +
+        "Pass force_regenerate=true to rebuild an already-cached report.",
       inputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
-        const report = await client.getOrGenerateReport(args.simulation_id);
+        const report = await client.getOrGenerateReport(
+          args.simulation_id,
+          args.force_regenerate ?? false,
+        );
 
         // Still generating or failed — return status only
         if (report.status !== "completed" || !report.markdown_content) {

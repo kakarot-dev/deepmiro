@@ -1677,14 +1677,17 @@ def stop_simulation():
             }), 400
         
         run_state = SimulationRunner.stop_simulation(simulation_id)
-        
-        # 更新模拟状态
+
+        # 更新模拟状态 — STOPPED (not PAUSED). Pausing implies resumable,
+        # and /stop unconditionally SIGTERMs the subprocess — there's no
+        # resume path. MCP clients reading sim.status need to see a
+        # terminal non-completed state.
         manager = SimulationManager()
         state = manager.get_simulation(simulation_id)
         if state:
-            state.status = SimulationStatus.PAUSED
+            state.status = SimulationStatus.STOPPED
             manager._save_simulation_state(state)
-        
+
         return jsonify({
             "success": True,
             "data": run_state.to_dict()

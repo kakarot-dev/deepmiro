@@ -234,7 +234,7 @@ async function resolveRunningStatus(
       simulation_id: sim.simulation_id,
       phase: "simulating",
       phase_display: "Running simulation",
-      progress: runStatus.progress_percentage,
+      progress: runStatus.progress_percent ?? runStatus.progress_percentage ?? 0,
       current_round: runStatus.current_round,
       total_rounds: runStatus.total_rounds,
       total_actions: totalActions,

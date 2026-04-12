@@ -607,17 +607,21 @@ class SimulationRunner:
                 logger.info(f"模拟完成: {simulation_id}")
             else:
                 state.runner_status = RunnerStatus.FAILED
-                # 从主日志文件读取错误信息
-                main_log_path = os.path.join(sim_dir, "simulation.log")
-                error_info = ""
-                try:
-                    if os.path.exists(main_log_path):
-                        with open(main_log_path, 'r', encoding='utf-8') as f:
-                            error_info = f.read()[-2000:]  # 取最后2000字符
-                except Exception:
-                    pass
-                state.error = f"进程退出码: {exit_code}, 错误: {error_info}"
-                logger.error(f"模拟失败: {simulation_id}, error={state.error}")
+                # Extract a clean English error summary from the subprocess
+                # log. Prefer the last Python traceback (most diagnostic),
+                # fall back to the last ~30 lines if no traceback is found.
+                error_reason = cls._extract_error_reason(
+                    os.path.join(sim_dir, "simulation.log"), exit_code
+                )
+                state.error = error_reason
+                logger.error(
+                    "Simulation subprocess failed: %s, exit_code=%d, reason=%s",
+                    simulation_id, exit_code, error_reason[:500],
+                )
+                # Also propagate to the outer Simulation state so MCP's
+                # simulation_status tool sees sim.status === "failed". The
+                # inner SimulationRunState alone isn't enough.
+                cls._mark_outer_simulation_failed(simulation_id, error_reason)
             
             state.twitter_running = False
             state.reddit_running = False
@@ -794,6 +798,73 @@ class SimulationRunner:
         # 至少有一个平台被启用且已完成
         return twitter_enabled or reddit_enabled
     
+    @staticmethod
+    def _extract_error_reason(log_path: str, exit_code: int) -> str:
+        """Extract an English error summary from a subprocess log file.
+
+        Prefers the last Python traceback (from "Traceback (most recent
+        call last):" to end-of-file). Falls back to the last ~30 lines
+        when no traceback is present. Truncates to a reasonable length
+        so state.json doesn't balloon.
+        """
+        prefix = f"Subprocess exited with code {exit_code}."
+        try:
+            if not os.path.exists(log_path):
+                return f"{prefix} Log file not found at {log_path}."
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception as exc:
+            return f"{prefix} Failed to read log: {exc}"
+
+        # Find the LAST traceback — older ones may be recovered errors.
+        marker = "Traceback (most recent call last):"
+        last_tb_idx = content.rfind(marker)
+        if last_tb_idx != -1:
+            tb_text = content[last_tb_idx:].strip()
+            # Cap at 3000 chars — tracebacks can be deep but a long tail
+            # from CAMEL / asyncio is usually noise.
+            if len(tb_text) > 3000:
+                tb_text = tb_text[-3000:]
+            return f"{prefix}\n\n{tb_text}"
+
+        # No traceback — return the last ~30 non-empty lines.
+        lines = [ln for ln in content.splitlines() if ln.strip()]
+        tail = "\n".join(lines[-30:])
+        if len(tail) > 2000:
+            tail = tail[-2000:]
+        return f"{prefix} No traceback found. Last log lines:\n\n{tail}"
+
+    @classmethod
+    def _mark_outer_simulation_failed(cls, simulation_id: str, error: str) -> None:
+        """Propagate subprocess failure to the outer Simulation state.
+
+        The inner SimulationRunState already has `error` set, but the
+        outer Simulation (simulation_state.json consumed by the MCP
+        simulation_status tool) only flips to FAILED if we explicitly
+        update it here. Without this, sims that die mid-run look like
+        they're still "running" or "completed" to MCP clients.
+        """
+        try:
+            from .simulation_manager import SimulationManager, SimulationStatus
+        except Exception as exc:
+            logger.warning("Cannot import SimulationManager to mark failed: %s", exc)
+            return
+        try:
+            manager = SimulationManager()
+            outer_state = manager.get_simulation(simulation_id)
+            if outer_state is None:
+                logger.warning("No outer state for %s when marking failed", simulation_id)
+                return
+            outer_state.status = SimulationStatus.FAILED
+            outer_state.error = error
+            manager._save_simulation_state(outer_state)
+            logger.info("Marked outer Simulation state FAILED for %s", simulation_id)
+        except Exception as exc:
+            logger.error(
+                "Failed to mark outer Simulation state as FAILED for %s: %s",
+                simulation_id, exc,
+            )
+
     @classmethod
     def _terminate_process(cls, process: subprocess.Popen, simulation_id: str, timeout: int = 10):
         """
