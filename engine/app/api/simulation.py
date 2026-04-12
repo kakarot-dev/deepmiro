@@ -1892,8 +1892,10 @@ def get_simulation_actions(simulation_id: str):
         offset = request.args.get('offset', 0, type=int)
         platform = request.args.get('platform')
         agent_id = request.args.get('agent_id', type=int)
+        agent_name = request.args.get('agent_name')
+        action_type = request.args.get('action_type')
         round_num = request.args.get('round_num', type=int)
-        
+
         actions = SimulationRunner.get_actions(
             simulation_id=simulation_id,
             limit=limit,
@@ -1902,12 +1904,21 @@ def get_simulation_actions(simulation_id: str):
             agent_id=agent_id,
             round_num=round_num
         )
-        
+
+        # Apply agent_name and action_type filters client-side (SimulationRunner
+        # doesn't support them, but these are common queries from the MCP tool)
+        result = [a.to_dict() for a in actions]
+        if agent_name:
+            q = agent_name.lower()
+            result = [a for a in result if q in a.get("agent_name", "").lower()]
+        if action_type:
+            result = [a for a in result if a.get("action_type") == action_type]
+
         return jsonify({
             "success": True,
             "data": {
-                "count": len(actions),
-                "actions": [a.to_dict() for a in actions]
+                "count": len(result),
+                "actions": result
             }
         })
         
