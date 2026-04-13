@@ -103,7 +103,7 @@ DeepMiro is an [MCP](https://modelcontextprotocol.io) server. MCP is the univers
 npx deepmiro-mcp
 ```
 
-Available tools: `create_simulation`, `quick_predict`, `simulation_status`, `get_report`, `interview_agent`, `upload_document`, `list_simulations`, `search_simulations`.
+Available tools: `create_simulation`, `simulation_status`, `get_report`, `interview_agent`, `upload_document`, `list_simulations`, `search_simulations`, `simulation_data`, `cancel_simulation`.
 
 ## What's Different
 

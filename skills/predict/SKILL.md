@@ -1,6 +1,6 @@
 ---
 name: predict
-description: Run a DeepMiro swarm prediction — simulate how communities react to events. Use when user says "predict", "simulate", "how will people react", or "what would happen if".
+description: Run a DeepMiro swarm prediction — simulate how hundreds of AI agents with distinct personas would react to a scenario. Invoke whenever the user asks to predict, simulate, or forecast reactions to an event, announcement, product, policy, or hypothetical — EVEN IF the scenario is vague or missing. The skill handles clarification from within; do NOT ask for details in plain chat first. Trigger phrases include "predict", "predict something", "can you predict", "run a prediction", "do a prediction", "simulate", "run a simulation", "how will people react", "how will X react to Y", "what would happen if", "forecast reactions", "model the response".
 argument-hint: "[scenario] [optional-file-path]"
 ---
 
@@ -230,5 +230,5 @@ If user wants to talk to a persona:
 - **Names, never IDs** — say "Prof. Zhang" not "Agent_34" or "agent_id: 7"
 - **File uploads** — always use `upload_document` MCP tool first, pass the returned `document_id` to `create_simulation`. Never base64 encode files in prompts.
 - **Error recovery** — if simulation fails, offer to retry with a smaller preset
-- **Quick predict** — if user just wants a fast take without a full simulation, use `quick_predict` and mention the full sim is available for deeper analysis
+- **Cancel a runaway** — if a sim is taking too long, producing bad output, or was started by mistake, use `cancel_simulation`. Partial action log is preserved.
 - **Be conversational** — narrate the simulation like you're watching it unfold, not reading logs

@@ -530,6 +530,6 @@ describe("server – createMcpServer()", () => {
     assert.strictEqual(typeof client.getSimulation, "function");
     assert.strictEqual(typeof client.listSimulations, "function");
     assert.strictEqual(typeof client.interviewAgent, "function");
-    assert.strictEqual(typeof client.quickPredict, "function");
+    assert.strictEqual(typeof client.cancelSimulation, "function");
   });
 });

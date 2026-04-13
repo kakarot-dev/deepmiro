@@ -9,7 +9,6 @@ import { registerGetReport } from "./get-report.js";
 import { registerInterviewAgent } from "./interview-agent.js";
 import { registerListSimulations } from "./list-simulations.js";
 import { registerSearchSimulations } from "./search-simulations.js";
-import { registerQuickPredict } from "./quick-predict.js";
 import { registerUploadDocument } from "./upload-document.js";
 import { registerSimulationData } from "./simulation-data.js";
 import { registerCancelSimulation } from "./cancel-simulation.js";
@@ -21,7 +20,6 @@ export function registerAllTools(server: McpServer, client: MirofishClient): voi
   registerInterviewAgent(server, client);
   registerListSimulations(server, client);
   registerSearchSimulations(server, client);
-  registerQuickPredict(server, client);
   registerUploadDocument(server, client);
   registerSimulationData(server, client);
   registerCancelSimulation(server, client);

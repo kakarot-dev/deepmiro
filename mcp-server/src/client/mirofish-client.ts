@@ -323,23 +323,6 @@ export class MirofishClient {
   }
 
   // ------------------------------------------------------------------
-  // Quick predict (lightweight, no full simulation)
-  // ------------------------------------------------------------------
-
-  async quickPredict(prompt: string): Promise<string> {
-    const resp = await this.post<{ response: string }>("/api/report/chat", {
-      simulation_id: "__quick_predict__",
-      message:
-        "You are a swarm behavior prediction engine. Given the following scenario, " +
-        "predict what would happen if this were simulated across social media platforms " +
-        "with diverse agent personas. Be specific, cite likely faction formation, " +
-        "sentiment shifts, and viral dynamics.\n\nScenario: " +
-        prompt,
-    });
-    return resp.data?.response ?? "Unable to generate prediction";
-  }
-
-  // ------------------------------------------------------------------
   // Internal: lower-level API calls
   // ------------------------------------------------------------------
 
