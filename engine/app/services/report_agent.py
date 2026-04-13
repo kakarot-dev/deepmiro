@@ -1691,36 +1691,68 @@ class ReportAgent:
             
             # 解析大纲
             sections = []
-            for section_data in response.get("sections", []):
-                sections.append(ReportSection(
-                    title=section_data.get("title", ""),
-                    content=""
-                ))
-            
+            # Tolerate LLMs that wrap the outline inside an "outline" key
+            # (e.g. {"outline": {"sections": [...]}}). chat_json has no way
+            # to enforce the top-level shape, so we re-root if needed.
+            outline_body = response
+            if (
+                isinstance(response, dict)
+                and "sections" not in response
+                and isinstance(response.get("outline"), dict)
+            ):
+                outline_body = response["outline"]
+
+            for section_data in outline_body.get("sections", []):
+                title = (section_data or {}).get("title", "").strip() if isinstance(section_data, dict) else ""
+                if title:
+                    sections.append(ReportSection(title=title, content=""))
+
+            # If the LLM returned zero sections, that's a planning failure
+            # — treat it the same as an exception and use the default
+            # outline instead of silently producing an empty report. This
+            # guards against the case where chat_json parses a valid but
+            # empty JSON response like {"title": "...", "sections": []}.
+            if not sections:
+                logger.error(
+                    "plan_outline: LLM returned zero sections; falling back to default outline. "
+                    "raw_keys=%s",
+                    list(response.keys()) if isinstance(response, dict) else type(response).__name__,
+                )
+                return self._default_outline()
+
             outline = ReportOutline(
-                title=response.get("title", "Simulation Analysis Report"),
-                summary=response.get("summary", ""),
+                title=outline_body.get("title") or response.get("title") or "Simulation Analysis Report",
+                summary=outline_body.get("summary") or response.get("summary") or "",
                 sections=sections
             )
-            
+
             if progress_callback:
                 progress_callback("planning", 100, t('progress.outlinePlanComplete'))
-            
+
             logger.info(t('report.outlinePlanDone', count=len(sections)))
             return outline
-            
+
         except Exception as e:
             logger.error(t('report.outlinePlanFailed', error=str(e)))
-            # 返回默认大纲（3个章节，作为fallback）
-            return ReportOutline(
-                title="Future Prediction Report",
-                summary="Future trends and risk analysis based on simulation predictions",
-                sections=[
-                    ReportSection(title="Prediction Scenario and Core Findings"),
-                    ReportSection(title="Population Behavior Prediction Analysis"),
-                    ReportSection(title="Trend Outlook and Risk Alerts")
-                ]
-            )
+            return self._default_outline()
+
+    @staticmethod
+    def _default_outline() -> "ReportOutline":
+        """Fallback outline used when the planner LLM call fails or
+        returns an empty section list. Five sections cover the core
+        predictive angles; the section writer fills them in regardless
+        of the simulation topic."""
+        return ReportOutline(
+            title="Future Prediction Report",
+            summary="Future trends and risk analysis based on simulation predictions",
+            sections=[
+                ReportSection(title="Prediction Scenario and Core Findings"),
+                ReportSection(title="Population Behavior Prediction Analysis"),
+                ReportSection(title="Media, Mobilization, and Narrative Dynamics"),
+                ReportSection(title="Systemic Risks and Cascading Effects"),
+                ReportSection(title="Trend Outlook and Policy Implications"),
+            ]
+        )
     
     def _generate_section_react(
         self, 
