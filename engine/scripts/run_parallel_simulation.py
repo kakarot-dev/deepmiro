@@ -1234,6 +1234,14 @@ async def run_twitter_simulation(
                 if structured_personas else None
             )
 
+            # Pull static world-state facts from the config so every
+            # Character Brief includes a "Current World State" block
+            # instead of forging round-0 seed posts.
+            scenario_facts = (
+                config.get("event_config", {}).get("scenario_facts") or []
+            )
+            twitter_db_path = os.path.join(simulation_dir, "twitter_simulation.db")
+
             storage = get_storage()
             twitter_pager = AgentPager(
                 storage,
@@ -1243,12 +1251,15 @@ async def run_twitter_simulation(
                 agent_names=agent_names,
                 platform_suffix=_lang_suffix_tw,
                 restore_chat_history=False,
+                scenario_facts=scenario_facts,
+                platform_db_path=twitter_db_path,
             )
             twitter_pager.cache_base_personas(result.agent_graph)
             twitter_pager.evict_all(result.agent_graph)
             log_info(
                 f"AVM paging enabled "
-                f"(persona_rebuild={persona_builder is not None})"
+                f"(persona_rebuild={persona_builder is not None}, "
+                f"scenario_facts={len(scenario_facts)})"
             )
         except Exception as exc:
             log_info(f"AVM paging unavailable: {exc}")
@@ -1260,54 +1271,25 @@ async def run_twitter_simulation(
     total_actions = 0
     last_rowid = 0  # 跟踪数据库中最后处理的行号（使用 rowid 避免 created_at 格式差异）
 
-    # 执行初始事件
-    event_config = config.get("event_config", {})
-    initial_posts = event_config.get("initial_posts", [])
-
-    # 记录 round 0 开始（初始事件阶段）
+    # Round 0 is now a no-op placeholder. We used to inject LLM-generated
+    # "breaking news" posts here with ManualAction, but that forced
+    # scenario narration into specific agents' mouths (e.g., Khamenei's
+    # regime-speak ended up attributed to Ursula von der Leyen because
+    # the assigner did dumb type-bucket round-robin). Scenario facts now
+    # flow via the AgentPager's per-round Character Brief world-state
+    # block — see PersonaPromptBuilder.build(world_state=...) — so
+    # agents read the world state as environment context rather than as
+    # forged timeline posts. Keeping round 0 in the log for continuity.
     if action_logger:
-        action_logger.log_round_start(0, 0)  # round 0, simulated_hour 0
+        action_logger.log_round_start(0, 0)
+        action_logger.log_round_end(0, 0)
 
-    initial_action_count = 0
-    if initial_posts:
-        initial_actions = {}
-        for post in initial_posts:
-            agent_id = post.get("poster_agent_id", 0)
-            content = post.get("content", "")
-            try:
-                agent = result.env.agent_graph.get_agent(agent_id)
-                initial_actions[agent] = ManualAction(
-                    action_type=ActionType.CREATE_POST,
-                    action_args={"content": content}
-                )
-                
-                if action_logger:
-                    action_logger.log_action(
-                        round_num=0,
-                        agent_id=agent_id,
-                        agent_name=agent_names.get(agent_id, f"Agent_{agent_id}"),
-                        action_type="CREATE_POST",
-                        action_args={"content": content}
-                    )
-                    total_actions += 1
-                    initial_action_count += 1
-            except Exception:
-                pass
-        
-        if initial_actions:
-            await result.env.step(initial_actions)
-            log_info(f"已发布 {len(initial_actions)} 条初始帖子")
-    
-    # 记录 round 0 结束
-    if action_logger:
-        action_logger.log_round_end(0, initial_action_count)
-    
     # 主模拟循环
     time_config = config.get("time_config", {})
     total_hours = time_config.get("total_simulation_hours", 72)
     minutes_per_round = time_config.get("minutes_per_round", 30)
     total_rounds = (total_hours * 60) // minutes_per_round
-    
+
     # 如果指定了最大轮数，则截断
     if max_rounds is not None and max_rounds > 0:
         original_rounds = total_rounds
@@ -1532,6 +1514,11 @@ async def run_reddit_simulation(
                 if structured_personas else None
             )
 
+            scenario_facts = (
+                config.get("event_config", {}).get("scenario_facts") or []
+            )
+            reddit_db_path = os.path.join(simulation_dir, "reddit_simulation.db")
+
             storage = get_storage()
             reddit_pager = AgentPager(
                 storage,
@@ -1541,12 +1528,15 @@ async def run_reddit_simulation(
                 agent_names=agent_names,
                 platform_suffix=_reddit_platform_suffix,
                 restore_chat_history=False,
+                scenario_facts=scenario_facts,
+                platform_db_path=reddit_db_path,
             )
             reddit_pager.cache_base_personas(result.agent_graph)
             reddit_pager.evict_all(result.agent_graph)
             log_info(
                 f"AVM paging enabled "
-                f"(persona_rebuild={persona_builder is not None})"
+                f"(persona_rebuild={persona_builder is not None}, "
+                f"scenario_facts={len(scenario_facts)})"
             )
         except Exception as exc:
             log_info(f"AVM paging unavailable: {exc}")
@@ -1558,55 +1548,12 @@ async def run_reddit_simulation(
     total_actions = 0
     last_rowid = 0  # 跟踪数据库中最后处理的行号（使用 rowid 避免 created_at 格式差异）
 
-    # 执行初始事件
-    event_config = config.get("event_config", {})
-    initial_posts = event_config.get("initial_posts", [])
-
-    # 记录 round 0 开始（初始事件阶段）
+    # Round 0 is a no-op placeholder. Scenario facts flow via the
+    # AgentPager's per-round Character Brief world-state block — see
+    # the Twitter runner above for the full rationale.
     if action_logger:
-        action_logger.log_round_start(0, 0)  # round 0, simulated_hour 0
-
-    initial_action_count = 0
-    if initial_posts:
-        initial_actions = {}
-        for post in initial_posts:
-            agent_id = post.get("poster_agent_id", 0)
-            content = post.get("content", "")
-            try:
-                agent = result.env.agent_graph.get_agent(agent_id)
-                if agent in initial_actions:
-                    if not isinstance(initial_actions[agent], list):
-                        initial_actions[agent] = [initial_actions[agent]]
-                    initial_actions[agent].append(ManualAction(
-                        action_type=ActionType.CREATE_POST,
-                        action_args={"content": content}
-                    ))
-                else:
-                    initial_actions[agent] = ManualAction(
-                        action_type=ActionType.CREATE_POST,
-                        action_args={"content": content}
-                    )
-                
-                if action_logger:
-                    action_logger.log_action(
-                        round_num=0,
-                        agent_id=agent_id,
-                        agent_name=agent_names.get(agent_id, f"Agent_{agent_id}"),
-                        action_type="CREATE_POST",
-                        action_args={"content": content}
-                    )
-                    total_actions += 1
-                    initial_action_count += 1
-            except Exception:
-                pass
-        
-        if initial_actions:
-            await result.env.step(initial_actions)
-            log_info(f"已发布 {len(initial_actions)} 条初始帖子")
-    
-    # 记录 round 0 结束
-    if action_logger:
-        action_logger.log_round_end(0, initial_action_count)
+        action_logger.log_round_start(0, 0)
+        action_logger.log_round_end(0, 0)
     
     # 主模拟循环
     time_config = config.get("time_config", {})

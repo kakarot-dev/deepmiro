@@ -366,8 +366,27 @@ class PersonaPromptBuilder:
         base_persona_prose: str = "",
         recent_own_actions: Optional[List[Dict[str, Any]]] = None,
         platform_suffix: str = "",
+        world_state_facts: Optional[List[str]] = None,
+        viral_highlights: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Build the dynamic system message for one agent.
+
+        Args:
+            agent_id: numeric agent id
+            agent_name: display name used in third-person framing
+            base_persona_prose: original OASIS persona text (background)
+            recent_own_actions: this agent's own last few actions (voice anchor)
+            platform_suffix: language/format rules appended at the end
+            world_state_facts: static scenario facts from the prepare
+                phase, e.g. ["US struck Natanz", "Iran retaliating"].
+                Shown in a "Current World State" block so round-1
+                agents know what's happening without needing forged
+                seed posts on the timeline.
+            viral_highlights: top posts from the previous round
+                (each a dict with ``agent_name``, ``content``,
+                ``num_likes``). Shown alongside world state so agents
+                see what's dominating the discourse. Optional —
+                round 1 typically has none.
 
         Returns a markdown string ready to assign to
         ``agent.system_message.content``.
@@ -471,6 +490,51 @@ class PersonaPromptBuilder:
                     lines.append(f'- "{excerpt}"')
                 lines.append("")
 
+        # ── Current world state (scenario context + live highlights) ──
+        # Lets round-1 agents know what's happening in the world without
+        # forcing scenario narration into specific agents' mouths via
+        # forged seed posts. Static facts come from the config generator,
+        # viral highlights come from the platform DB (top posts by
+        # engagement from the previous round).
+        has_facts = bool(world_state_facts)
+        has_highlights = bool(viral_highlights)
+        if has_facts or has_highlights:
+            lines.append("## Current World State")
+            lines.append(
+                "This is the situation in the simulated world right now. "
+                "React as " + agent_name + " would, given what is happening."
+            )
+            lines.append("")
+
+            if has_facts:
+                lines.append("### What is happening")
+                for fact in world_state_facts or []:
+                    f = str(fact).strip()
+                    if f:
+                        lines.append(f"- {f}")
+                lines.append("")
+
+            if has_highlights:
+                lines.append("### What is trending on the platform")
+                for h in viral_highlights or []:
+                    if not isinstance(h, dict):
+                        continue
+                    name = str(h.get("agent_name") or "Unknown").strip()
+                    content = str(h.get("content") or "").strip().replace("\n", " ")
+                    if not content:
+                        continue
+                    excerpt = content[:200]
+                    likes = h.get("num_likes")
+                    shares = h.get("num_shares")
+                    meta = []
+                    if isinstance(likes, int) and likes > 0:
+                        meta.append(f"{likes} likes")
+                    if isinstance(shares, int) and shares > 0:
+                        meta.append(f"{shares} shares")
+                    meta_str = f" ({', '.join(meta)})" if meta else ""
+                    lines.append(f'- **{name}**{meta_str}: "{excerpt}"')
+                lines.append("")
+
         # ── Reaction framing ──
         lines.append("## Task")
         lines.append(
@@ -528,6 +592,8 @@ class AgentPager:
         agent_names: Optional[Dict[int, str]] = None,
         platform_suffix: str = "",
         restore_chat_history: bool = False,
+        scenario_facts: Optional[List[str]] = None,
+        platform_db_path: Optional[str] = None,
     ):
         """
         Args:
@@ -546,6 +612,18 @@ class AgentPager:
                 persona drift fix — accumulated history drowns the system
                 prompt's attention weight and causes bland centrist drift.
                 Set True to restore legacy behavior (diagnostic / forensics).
+            scenario_facts: Short bullet list of world-state facts from the
+                config generator (e.g. "US struck Natanz"). Injected as a
+                static "Current World State" block in every agent's
+                Character Brief every round. Replaces the old round-0
+                seed-post mechanism which forced scenario narration into
+                specific agents' mouths with wrong attribution.
+            platform_db_path: Optional path to the OASIS platform sqlite
+                db (twitter_simulation.db / reddit_simulation.db). When
+                set, each hydrate pulls the top 3 viral posts by
+                num_likes + 2*num_shares and appends them to the world
+                state block as "trending on the platform". None skips
+                this and only the static facts are shown.
         """
         self._storage = storage
         self._simulation_id = simulation_id
@@ -562,6 +640,9 @@ class AgentPager:
         # level, once per agent) so we have proof the rebuild actually ran
         # without spamming every round.
         self._logged_first_rebuild: Set[int] = set()
+        # World-state context threaded into every Character Brief.
+        self._scenario_facts: List[str] = list(scenario_facts or [])
+        self._platform_db_path: Optional[str] = platform_db_path
 
     # ------------------------------------------------------------------
     # Public API
@@ -647,6 +728,11 @@ class AgentPager:
                     )
                     own_actions[aid] = []
 
+        # ── Viral highlights (shared across all agents this round) ──
+        # Query the platform sqlite db once per hydrate. Empty on round 1
+        # because no posts exist yet; grows from round 2 onward.
+        viral_highlights = self._fetch_viral_highlights(limit=3)
+
         for aid in agent_ids:
             try:
                 agent = agent_graph.get_agent(aid)
@@ -682,6 +768,8 @@ class AgentPager:
                         base_persona_prose=base_prose,
                         recent_own_actions=own_actions.get(aid, []),
                         platform_suffix=self._platform_suffix,
+                        world_state_facts=self._scenario_facts,
+                        viral_highlights=viral_highlights,
                     )
                     rebuilt = self._replace_system_message(agent, new_content)
                     if rebuilt and aid not in self._logged_first_rebuild:
@@ -706,6 +794,61 @@ class AgentPager:
             len(agent_ids), self._platform,
             self._persona_builder is not None,
         )
+
+    def _fetch_viral_highlights(self, limit: int = 3) -> List[Dict[str, Any]]:
+        """Query the platform sqlite db for the top posts by engagement.
+
+        Returns a list of dicts suitable for PersonaPromptBuilder's
+        ``viral_highlights`` param:
+            [{"agent_name": str, "content": str,
+              "num_likes": int, "num_shares": int}, ...]
+
+        Cheap: one indexed SELECT per hydrate call, not per agent.
+        Silently returns [] if the db path is missing or unreadable —
+        the static scenario_facts block will still populate on its own.
+        """
+        if not self._platform_db_path:
+            return []
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self._platform_db_path)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT user_id, content, num_likes, num_shares
+                    FROM post
+                    WHERE content IS NOT NULL AND content != ''
+                    ORDER BY (num_likes + 2 * num_shares) DESC, post_id DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.debug(
+                "AgentPager[%s]: viral-highlights query failed: %s",
+                self._platform, exc,
+            )
+            return []
+
+        highlights: List[Dict[str, Any]] = []
+        for user_id, content, num_likes, num_shares in rows:
+            # Only surface posts with at least SOME engagement — a post
+            # nobody liked isn't viral, it's just first in line.
+            total = int(num_likes or 0) + int(num_shares or 0)
+            if total <= 0:
+                continue
+            name = self._agent_names.get(int(user_id), f"Agent_{user_id}")
+            highlights.append({
+                "agent_name": name,
+                "content": str(content or ""),
+                "num_likes": int(num_likes or 0),
+                "num_shares": int(num_shares or 0),
+            })
+        return highlights
 
     @staticmethod
     def _replace_system_message(agent, new_content: str) -> bool:

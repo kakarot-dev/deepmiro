@@ -113,15 +113,26 @@ class TimeSimulationConfig:
 @dataclass
 class EventConfig:
     """事件配置"""
-    # 初始事件（模拟开始时的触发事件）
+    # DEPRECATED: initial_posts used to be ManualAction-injected into
+    # round 0 of the sim, but forced scenario narration into specific
+    # agents' mouths. Agents now learn the world state via the
+    # AgentPager's per-round Character Brief world_state block. Kept on
+    # the dataclass for backward compatibility with older configs on
+    # disk, but never read at runtime.
     initial_posts: List[Dict[str, Any]] = field(default_factory=list)
-    
+
+    # Short bullet list of world-state facts extracted from the
+    # simulation_requirement at prepare time. Injected into every
+    # agent's Character Brief so round-1 agents know what's happening
+    # in the world without needing forged seed posts on the feed.
+    scenario_facts: List[str] = field(default_factory=list)
+
     # 定时事件（在特定时间触发的事件）
     scheduled_events: List[Dict[str, Any]] = field(default_factory=list)
-    
+
     # 热点话题关键词
     hot_topics: List[str] = field(default_factory=list)
-    
+
     # 舆论引导方向
     narrative_direction: str = ""
 
@@ -683,27 +694,26 @@ Simulation requirement: {simulation_requirement}
 {type_info}
 
 ## Task
-Generate event configuration JSON:
-- Extract hot topic keywords
-- Describe the direction of public opinion development
-- Design initial post content; **each post must specify poster_type (publisher type)**
+Extract the world-state facts agents need to react to. Return:
 
-**Important**: poster_type must be selected from the "Available Entity Types" above, so that initial posts can be assigned to appropriate Agents for publishing.
-For example: official statements should be published by Official/University types, news by MediaOutlet, student views by Student.
+- `hot_topics`: short keyword list
+- `narrative_direction`: one-line description of how opinion is likely to evolve
+- `scenario_facts`: 5-8 bullet-style sentences describing the current world state (what has just happened, what the agents would see on TV / news when the sim begins). Each bullet one sentence, factual, third-person. These are NOT posts by any agent — they're environment context every agent reads.
 
-Return JSON format (no markdown):
+Return JSON (no markdown):
 {{
-    "hot_topics": ["keyword1", "keyword2", ...],
-    "narrative_direction": "<description of public opinion development direction>",
-    "initial_posts": [
-        {{"content": "post content", "poster_type": "entity type (must be selected from available types)"}},
-        ...
+    "hot_topics": ["keyword1", "keyword2"],
+    "narrative_direction": "...",
+    "scenario_facts": [
+        "US strikes destroyed Iranian nuclear enrichment facilities at Natanz and Fordow earlier today.",
+        "Iran's Supreme Leader has vowed severe retaliation against US forces in the region.",
+        "Oil prices spiked above $120/barrel on news of possible Strait of Hormuz closure."
     ],
-    "reasoning": "<brief explanation>"
+    "reasoning": "..."
 }}"""
 
-        system_prompt = "You are a public opinion analysis expert. Return pure JSON format. Note that poster_type must exactly match available entity types."
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
+        system_prompt = "You are a public opinion analysis expert. Return pure JSON format."
+        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
 
         try:
             return self._call_llm_with_retry(prompt, system_prompt)
@@ -712,17 +722,31 @@ Return JSON format (no markdown):
             return {
                 "hot_topics": [],
                 "narrative_direction": "",
-                "initial_posts": [],
+                "scenario_facts": [],
                 "reasoning": "Using default configuration"
             }
-    
+
     def _parse_event_config(self, result: Dict[str, Any]) -> EventConfig:
         """解析事件配置结果"""
+        raw_facts = result.get("scenario_facts", []) or []
+        # Accept both list[str] and list[dict] shapes defensively —
+        # some LLMs return `[{"fact": "..."}]` despite the instruction.
+        scenario_facts: List[str] = []
+        for item in raw_facts:
+            if isinstance(item, str) and item.strip():
+                scenario_facts.append(item.strip())
+            elif isinstance(item, dict):
+                for k in ("fact", "text", "content", "sentence"):
+                    v = item.get(k)
+                    if isinstance(v, str) and v.strip():
+                        scenario_facts.append(v.strip())
+                        break
         return EventConfig(
-            initial_posts=result.get("initial_posts", []),
+            initial_posts=[],  # deprecated — see dataclass docstring
             scheduled_events=[],
             hot_topics=result.get("hot_topics", []),
-            narrative_direction=result.get("narrative_direction", "")
+            narrative_direction=result.get("narrative_direction", ""),
+            scenario_facts=scenario_facts,
         )
     
     def _assign_initial_post_agents(
