@@ -1,12 +1,191 @@
+###############################################################################
+# DeepMiro — root docker-compose.yml
+#
+# Single-file deployment for the DeepMiro swarm simulation engine. Works
+# both with local `docker compose up` AND as a one-click deployment on
+# Railway (Railway auto-detects docker-compose.yml at the repo root).
+#
+# Services:
+#   surrealdb      — graph + vector + document store
+#   twhin-sidecar  — pod-scoped TWHIN-BERT embedding service (v0.10+)
+#   backend        — Flask engine that runs OASIS simulations
+#   mcp            — MCP server (optional; only needed if you want Claude
+#                    Code / Claude Desktop / Cursor / etc. to reach the
+#                    backend through Model Context Protocol)
+#
+# Quick start (local):
+#   cp .env.example .env
+#   # edit .env and fill in LLM_API_KEY at minimum
+#   docker compose up -d
+#
+# Railway:
+#   Import this repo; Railway picks up docker-compose.yml automatically.
+#   Railway does NOT read .env files — set each variable in the Railway
+#   dashboard (Variables tab) and Railway injects them at container
+#   start. The defaults in this file cover inter-service URLs so you
+#   only need to set the LLM_* secrets.
+###############################################################################
+
 services:
-  deepmiro-engine:
-    image: ghcr.io/kakarot-dev/deepmiro-backend:latest
-    container_name: deepmiro-engine
-    env_file:
-      - .env
-    ports:
-      - "3000:3000"
-      - "5001:5001"
-    restart: unless-stopped
+  # ──────────────────────────────────────────────────────────────────
+  # SurrealDB — persistent graph + vector + document store
+  # ──────────────────────────────────────────────────────────────────
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    # SURREAL_PASSWORD has no default on purpose. Button-deploy to
+    # Railway / Render / Fly with an unset var will fail loudly
+    # here rather than start a DB with root:changeme open on an
+    # internal URL.
+    command: >
+      start
+      --user ${SURREAL_USER:-root}
+      --pass ${SURREAL_PASSWORD:?SURREAL_PASSWORD is required — set a strong value in .env}
+      --bind 0.0.0.0:8000
+      --log warn
+      -A surrealkv:/data/deepmiro.db
+    # No ports: block by default. The backend reaches SurrealDB via
+    # the internal service name `surrealdb`, so there's no need to
+    # publish port 8000 on the host — and publishing it would
+    # expose a root-privileged DB on the public IP of any VPS that
+    # runs `docker compose up`. For local dev where you want to
+    # query the DB from your host, uncomment the ports: block:
+    # ports:
+    #   - "${SURREAL_PORT:-8000}:8000"
+    expose:
+      - "8000"
     volumes:
-      - ./backend/uploads:/app/backend/uploads
+      - surreal-data:/data
+    restart: unless-stopped
+    # No healthcheck: the surrealdb/surrealdb:latest image is
+    # distroless and ships neither curl nor wget, and the
+    # `surreal is-ready` subcommand requires --endpoint on recent
+    # versions. The backend has its own retry loop against
+    # SURREAL_URL, so a missing healthcheck just means depends_on
+    # won't block boot — backend retries until the DB answers.
+
+  # ──────────────────────────────────────────────────────────────────
+  # TWHIN-BERT sidecar — pod-scoped embedding service
+  #
+  # Loads Twitter/twhin-bert-base exactly once for the whole deployment
+  # and serves embeddings to the sim subprocesses over HTTP. Without
+  # this, every sim subprocess would load its own 1.5 GB copy of the
+  # model and OOM the box. Not exposed to the outside world.
+  # ──────────────────────────────────────────────────────────────────
+  twhin-sidecar:
+    image: ghcr.io/kakarot-dev/deepmiro-twhin-sidecar:latest
+    # Alternative: build from source
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.twhin-sidecar
+    expose:
+      - "7001"
+    restart: unless-stopped
+    mem_limit: 2500m
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          python -c "import urllib.request; urllib.request.urlopen('http://localhost:7001/healthz', timeout=2)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # model load + first-run HF cache resolve
+
+  # ──────────────────────────────────────────────────────────────────
+  # Backend — Flask engine that runs the actual simulations
+  # ──────────────────────────────────────────────────────────────────
+  backend:
+    image: ghcr.io/kakarot-dev/deepmiro-backend:latest
+    # Alternative: build from source
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile.backend
+    environment:
+      # ── Storage backend ──
+      GRAPH_BACKEND: surrealdb
+      SURREAL_URL: ws://surrealdb:8000
+      SURREAL_NAMESPACE: ${SURREAL_NAMESPACE:-mirofish}
+      SURREAL_DATABASE: ${SURREAL_DATABASE:-production}
+      SURREAL_USER: ${SURREAL_USER:-root}
+      SURREAL_PASSWORD: ${SURREAL_PASSWORD:-changeme}
+
+      # ── Primary LLM (required) ──
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-gpt-4o-mini}
+
+      # ── Boost LLM (optional; used for reasoning-heavy tasks like
+      # report outline planning). Falls back to the primary LLM above
+      # if the boost variables are unset. ──
+      LLM_BOOST_API_KEY: ${LLM_BOOST_API_KEY:-${LLM_API_KEY}}
+      LLM_BOOST_BASE_URL: ${LLM_BOOST_BASE_URL:-${LLM_BASE_URL:-https://api.openai.com/v1}}
+      LLM_BOOST_MODEL_NAME: ${LLM_BOOST_MODEL_NAME:-${LLM_MODEL_NAME:-gpt-4o-mini}}
+
+      # ── Graph embedding model (nomic-embed via Fireworks by default) ──
+      EMBEDDING_PROVIDER: openai
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-${LLM_API_KEY}}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.fireworks.ai/inference}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+
+      # ── TWHIN-BERT recommender sidecar (internal URL) ──
+      TWHIN_URL: http://twhin-sidecar:7001
+
+      # ── Flask server ──
+      FLASK_HOST: 0.0.0.0
+      FLASK_PORT: "5001"
+    ports:
+      - "${BACKEND_PORT:-5001}:5001"
+    volumes:
+      - uploads:/app/deepmiro/engine/uploads
+    depends_on:
+      # SurrealDB has no healthcheck (distroless image, no curl/wget)
+      # so we can't gate on service_healthy. Backend retries the DB
+      # connection at startup via its own reconnect loop.
+      surrealdb:
+        condition: service_started
+      twhin-sidecar:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 8g
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          python -c "import urllib.request; urllib.request.urlopen('http://localhost:5001/health', timeout=2)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # ──────────────────────────────────────────────────────────────────
+  # MCP server (optional)
+  #
+  # Exposes the backend as a Model Context Protocol server so AI
+  # clients (Claude Desktop, Cursor, VS Code Copilot, etc.) can call
+  # create_simulation / get_report / interview_agent directly.
+  #
+  # Skip this service entirely if you're only using the REST API.
+  # ──────────────────────────────────────────────────────────────────
+  mcp:
+    image: ghcr.io/kakarot-dev/deepmiro-mcp:latest
+    # Alternative: build from source
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile
+    environment:
+      MIROFISH_URL: http://backend:5001
+      TRANSPORT: http
+      HTTP_PORT: "3001"
+      # Optional: set MCP_API_KEY to require clients to authenticate
+      MCP_API_KEY: ${MCP_API_KEY:-}
+    ports:
+      - "${MCP_PORT:-3001}:3001"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  surreal-data:
+  uploads:
