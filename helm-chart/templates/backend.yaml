@@ -20,6 +20,14 @@ metadata:
     component: backend
 spec:
   replicas: 1
+  # Recreate instead of RollingUpdate: we only run one replica, and
+  # the pod requests 5.5 GiB (backend 4 GiB + twhin-sidecar 1.5 GiB).
+  # A rolling update would need both old and new pods scheduled
+  # simultaneously, 11 GiB of requests on a 12 GiB node — no slot.
+  # Killing the old pod before starting the new one is the only way
+  # to fit the reservation budget on a single-node cluster.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
