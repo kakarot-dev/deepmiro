@@ -45,7 +45,8 @@ export type SimulationStatus =
   | "running"
   | "completed"
   | "stopped"
-  | "failed";
+  | "failed"
+  | "interrupted";
 
 export type Platform = "twitter" | "reddit";
 
@@ -161,9 +162,10 @@ export type PipelinePhase =
   | "generating_profiles"
   | "simulating"
   | "generating_report"
-  | "generating_report"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted"
+  | "stopped";
 
 export interface RichSimulationStatus {
   simulation_id: string;

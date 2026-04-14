@@ -510,18 +510,54 @@ class SimulationRunner:
             env['PYTHONUTF8'] = '1'  # Python 3.7+ 支持，让所有 open() 默认使用 UTF-8
             env['PYTHONIOENCODING'] = 'utf-8'  # 确保 stdout/stderr 使用 UTF-8
             
-            # 设置工作目录为模拟目录（数据库等文件会生成在此）
-            # 使用 start_new_session=True 创建新的进程组，确保可以通过 os.killpg 终止所有子进程
+            # Spawn the sim subprocess. Two lifecycle guarantees matter:
+            #
+            # 1. We need our own process group so that explicit stop
+            #    (os.killpg) can terminate the whole tree. That's what
+            #    start_new_session=True gives us.
+            #
+            # 2. If the backend Python process dies unexpectedly (OOM,
+            #    SIGKILL, container restart), the kernel should kill the
+            #    subprocess too — otherwise it orphans onto PID 1 and
+            #    keeps consuming RAM. In a containerized setup we've
+            #    seen 8+ orphaned sim subprocesses accumulate across OOM
+            #    cycles, each using ~1.5 GB, forcing runaway OOMs.
+            #
+            #    Linux prctl(PR_SET_PDEATHSIG, SIGTERM) tells the kernel
+            #    to send SIGTERM to this process as soon as its parent
+            #    dies — exactly what we want. But it interacts with (1):
+            #    start_new_session puts the child in its own session,
+            #    and the kernel resets PDEATHSIG on setsid(). So we have
+            #    to call prctl AFTER setsid. That means doing both in a
+            #    preexec_fn (child-side), not passing start_new_session
+            #    as a kwarg.
+            import ctypes as _ctypes
+            _PR_SET_PDEATHSIG = 1
+
+            def _child_preexec() -> None:
+                # Runs in the child between fork and execvp.
+                try:
+                    os.setsid()  # new session (replaces start_new_session=True)
+                except OSError:
+                    pass
+                if sys.platform.startswith("linux"):
+                    try:
+                        libc = _ctypes.CDLL("libc.so.6", use_errno=True)
+                        # SIGTERM = 15 on Linux
+                        libc.prctl(_PR_SET_PDEATHSIG, 15, 0, 0, 0)
+                    except Exception:
+                        pass
+
             process = subprocess.Popen(
                 cmd,
                 cwd=sim_dir,
                 stdout=main_log_file,
-                stderr=subprocess.STDOUT,  # stderr 也写入同一个文件
+                stderr=subprocess.STDOUT,
                 text=True,
-                encoding='utf-8',  # 显式指定编码
+                encoding='utf-8',
                 bufsize=1,
-                env=env,  # 传递带有 UTF-8 设置的环境变量
-                start_new_session=True,  # 创建新进程组，确保服务器关闭时能终止所有相关进程
+                env=env,
+                preexec_fn=_child_preexec,
             )
             
             # 保存文件句柄以便后续关闭

@@ -81,7 +81,50 @@ async function resolveStatus(
     };
   }
 
-  // Fallback for other statuses (ready, stopped)
+  if (sim.status === "interrupted") {
+    // Backend pod was killed (usually OOM) while the sim was mid-run.
+    // Partial action log is preserved on disk — callers can still
+    // call get_report or simulation_data on a cancelled/interrupted
+    // sim. We surface this as its own phase so clients stop showing
+    // a progress bar for a dead sim.
+    let partialActions: number | undefined;
+    try {
+      const runStatus = await client.getSimulationRunStatus(sim.simulation_id);
+      partialActions = runStatus.twitter_actions_count + runStatus.reddit_actions_count;
+    } catch { /* run status may be unavailable */ }
+    return {
+      simulation_id: sim.simulation_id,
+      phase: "interrupted",
+      phase_display: "Simulation interrupted",
+      progress: 0,
+      total_actions: partialActions,
+      message:
+        sim.error ??
+        "Simulation was interrupted before completion (backend restart). Partial data may be available.",
+      error: sim.error,
+    };
+  }
+
+  if (sim.status === "stopped") {
+    // User-initiated cancel via cancel_simulation / /api/simulation/stop.
+    // Like interrupted, partial data is usable.
+    let partialActions: number | undefined;
+    try {
+      const runStatus = await client.getSimulationRunStatus(sim.simulation_id);
+      partialActions = runStatus.twitter_actions_count + runStatus.reddit_actions_count;
+    } catch { /* run status may be unavailable */ }
+    return {
+      simulation_id: sim.simulation_id,
+      phase: "stopped",
+      phase_display: "Simulation cancelled",
+      progress: 0,
+      total_actions: partialActions,
+      message: `Simulation was cancelled. ${partialActions ?? 0} actions captured before stop.`,
+      error: sim.error,
+    };
+  }
+
+  // Fallback for other statuses (ready, etc.)
   return {
     simulation_id: sim.simulation_id,
     phase: "generating_profiles",

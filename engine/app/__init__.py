@@ -22,9 +22,12 @@ def _recover_interrupted_simulations(logger):
 
     Two failure modes addressed here:
 
-    1. **Pod OOMKilled mid-sim** — the OASIS subprocess dies with the
-       pod, but the on-disk run_state.json still says "running" with
-       the dead PID. New pod has no monitor thread to update it.
+    1. **Pod OOMKilled mid-sim** — the OASIS subprocess used to be
+       spawned without PR_SET_PDEATHSIG, so it would re-parent to PID
+       1 and keep running after the backend died. Disk run_state.json
+       still says "running" with a stale PID. v0.9.9 fixed the spawn
+       path so new subprocesses die with the parent; this recovery
+       handles the on-disk state that was already written.
     2. **Sim completed but outer state never propagated** — for sims
        that finished BEFORE v0.9.8's _mark_outer_simulation_completed
        fix, the inner runner_status is "completed" but the outer
@@ -33,8 +36,8 @@ def _recover_interrupted_simulations(logger):
 
     The scan walks every simulation directory on disk, compares the
     outer state.json against the inner run_state.json, and reconciles
-    both atomically. Old SurrealDB-only path is kept as well (some
-    deployments may have rows that aren't on this pod's PVC).
+    BOTH files atomically. Old SurrealDB-only path is kept as well
+    (some deployments may have rows that aren't on this pod's PVC).
     """
     # ── Disk scan: reconcile state.json ↔ run_state.json ──
     try:
@@ -104,22 +107,56 @@ def _recover_interrupted_simulations(logger):
                             "The subprocess was killed; partial action log preserved."
                         )
 
-                # Atomic update: rewrite state.json with the new status.
+                # Atomic update: rewrite state.json AND run_state.json.
+                # v0.9.8 only touched state.json, leaving run_state.json
+                # stale at runner_status=running. MCP simulation_status
+                # then read the stale run_state and kept reporting live
+                # progress for sims that were actually dead.
                 outer["status"] = new_status.value
                 if error_text:
                     outer["error"] = error_text
                 try:
                     with open(state_file, "w", encoding="utf-8") as f:
                         json.dump(outer, f, ensure_ascii=False, indent=2)
-                    reconciled += 1
-                    logger.warning(
-                        "Recovery: reconciled %s outer status %s → %s (runner=%s)",
-                        sim_id, outer_status, new_status.value, runner_status,
-                    )
                 except Exception as exc:
                     logger.error(
                         "Recovery: failed to rewrite %s state.json: %s", sim_id, exc
                     )
+                    continue
+
+                # Sync run_state.json if it exists on disk.
+                if os.path.exists(run_state_file):
+                    try:
+                        with open(run_state_file, "r", encoding="utf-8") as f:
+                            run = json.load(f)
+                        # Map outer → runner_status for consistency.
+                        runner_map = {
+                            SimulationStatus.COMPLETED: "completed",
+                            SimulationStatus.FAILED: "failed",
+                            SimulationStatus.STOPPED: "stopped",
+                            SimulationStatus.INTERRUPTED: "interrupted",
+                        }
+                        run["runner_status"] = runner_map.get(new_status, "interrupted")
+                        run["twitter_running"] = False
+                        run["reddit_running"] = False
+                        if error_text:
+                            run["error"] = error_text
+                        # Clear the dead PID so callers don't try to
+                        # SIGTERM a process that no longer exists.
+                        run["process_pid"] = None
+                        with open(run_state_file, "w", encoding="utf-8") as f:
+                            json.dump(run, f, ensure_ascii=False, indent=2)
+                    except Exception as exc:
+                        logger.warning(
+                            "Recovery: failed to sync %s run_state.json: %s",
+                            sim_id, exc,
+                        )
+
+                reconciled += 1
+                logger.warning(
+                    "Recovery: reconciled %s outer %s → %s (runner was %s)",
+                    sim_id, outer_status, new_status.value, runner_status,
+                )
 
             if reconciled:
                 logger.info("Recovery: reconciled %d simulation(s) from disk scan", reconciled)
