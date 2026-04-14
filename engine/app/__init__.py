@@ -107,29 +107,58 @@ def _recover_interrupted_simulations(logger):
                             "The subprocess was killed; partial action log preserved."
                         )
 
-                # Atomic update: rewrite state.json AND run_state.json.
-                # v0.9.8 only touched state.json, leaving run_state.json
-                # stale at runner_status=running. MCP simulation_status
-                # then read the stale run_state and kept reporting live
-                # progress for sims that were actually dead.
-                outer["status"] = new_status.value
-                if error_text:
-                    outer["error"] = error_text
+                # Atomic update: write via SimulationManager so SurrealDB
+                # gets the dual-write, not just state.json. v0.9.9's
+                # original recovery path did `json.dump` straight to
+                # state.json — that left SurrealDB at the stale "running"
+                # value, and since _load_simulation_state reads SurrealDB
+                # FIRST, every API call kept returning the stale status.
+                # Symptom: 38 disk-completed sims were invisible to the
+                # simulation_status MCP tool and the history listing.
                 try:
-                    with open(state_file, "w", encoding="utf-8") as f:
-                        json.dump(outer, f, ensure_ascii=False, indent=2)
+                    outer_state = manager.get_simulation(sim_id)
+                    if outer_state is None:
+                        # Fresh load by path — wrap the raw dict into a
+                        # SimulationState object so _save_simulation_state
+                        # can round-trip it through the dual-write path.
+                        # We only get here if the sim isn't in the
+                        # in-memory cache AND not in SurrealDB, which
+                        # shouldn't happen in practice, but handle it.
+                        logger.warning(
+                            "Recovery: %s not found via manager.get_simulation — "
+                            "falling back to raw disk rewrite (SurrealDB will "
+                            "stay out of sync until next _save_simulation_state)",
+                            sim_id,
+                        )
+                        outer["status"] = new_status.value
+                        if error_text:
+                            outer["error"] = error_text
+                        with open(state_file, "w", encoding="utf-8") as f:
+                            json.dump(outer, f, ensure_ascii=False, indent=2)
+                    else:
+                        outer_state.status = new_status
+                        if error_text:
+                            outer_state.error = error_text
+                        # _save_simulation_state writes disk + SurrealDB
+                        manager._save_simulation_state(outer_state)
                 except Exception as exc:
                     logger.error(
-                        "Recovery: failed to rewrite %s state.json: %s", sim_id, exc
+                        "Recovery: failed to reconcile %s via manager: %s",
+                        sim_id, exc,
                     )
                     continue
 
-                # Sync run_state.json if it exists on disk.
+                # Sync run_state.json if it exists on disk. This file is
+                # managed by SimulationRunner, not SimulationManager, so
+                # there's no corresponding manager API — direct write is
+                # the right call here. The SurrealDB mirror of run_state
+                # is also updated by the runner's _save_run_state on the
+                # next successful call, but at recovery time nothing is
+                # running, so we write disk only.
                 if os.path.exists(run_state_file):
                     try:
                         with open(run_state_file, "r", encoding="utf-8") as f:
                             run = json.load(f)
-                        # Map outer → runner_status for consistency.
                         runner_map = {
                             SimulationStatus.COMPLETED: "completed",
                             SimulationStatus.FAILED: "failed",
@@ -141,8 +170,6 @@ def _recover_interrupted_simulations(logger):
                         run["reddit_running"] = False
                         if error_text:
                             run["error"] = error_text
-                        # Clear the dead PID so callers don't try to
-                        # SIGTERM a process that no longer exists.
                         run["process_pid"] = None
                         with open(run_state_file, "w", encoding="utf-8") as f:
                             json.dump(run, f, ensure_ascii=False, indent=2)
