@@ -32,33 +32,30 @@ services:
   # ──────────────────────────────────────────────────────────────────
   surrealdb:
     image: surrealdb/surrealdb:latest
-    # SURREAL_PASSWORD has no default on purpose. Button-deploy to
-    # Railway / Render / Fly with an unset var will fail loudly
-    # here rather than start a DB with root:changeme open on an
-    # internal URL.
+    # SurrealDB 3.x reads all start-time config from environment
+    # variables natively (clap-bound env attrs) — no command-line
+    # flags or shell expansion needed. This is the only layout that
+    # works identically on local `docker compose up` AND on Railway,
+    # because Railway imports the compose file but does NOT do
+    # compose-level ${VAR} interpolation, and the surrealdb image
+    # is distroless so shell expansion isn't an option either.
     #
-    # The environment: block is load-bearing for Railway. Railway
-    # imports compose and creates one service variable per env
-    # entry. Without this block, Railway would create the surrealdb
-    # service with ZERO variables, and a backend reference like
-    # ${{surrealdb.SURREAL_PASSWORD}} would resolve to empty string
-    # because there's nothing named that on the surrealdb service.
-    # Declaring it here gives Railway a variable to expose and
-    # cross-reference, while still feeding the compose `command:`
-    # interpolation below.
+    # The list form below tells compose: for entries with `=`, use
+    # the literal value; for entries without, pass through from the
+    # calling environment (local: .env file auto-loaded by compose,
+    # Railway: service variables set in the dashboard).
     environment:
-      SURREAL_USER: ${SURREAL_USER:-root}
-      SURREAL_PASSWORD: ${SURREAL_PASSWORD:?SURREAL_PASSWORD is required — set a strong value in .env or Railway Variables}
-    # Command uses compose-level ${VAR} interpolation (substituted at
-    # parse time), NOT shell expansion — the surrealdb/surrealdb:latest
-    # image is distroless and has no /bin/sh to expand $VAR at runtime.
-    command: >
-      start
-      --user ${SURREAL_USER:-root}
-      --pass ${SURREAL_PASSWORD}
-      --bind 0.0.0.0:8000
-      --log warn
-      -A surrealkv:/data/deepmiro.db
+      # Default root user; override by setting SURREAL_USER in your
+      # .env or Railway service variables if you need a different one.
+      - SURREAL_USER=root
+      - SURREAL_BIND=0.0.0.0:8000
+      - SURREAL_PATH=surrealkv:/data/deepmiro.db
+      - SURREAL_LOG=warn
+      # Required. No default on purpose — prevents silent root-password
+      # shipping. Local compose: set in .env. Railway: set in the
+      # surrealdb service's Variables tab.
+      - SURREAL_PASS
+    command: start
     # No ports: block by default. The backend reaches SurrealDB via
     # the internal service name `surrealdb`, so there's no need to
     # publish port 8000 on the host — and publishing it would
@@ -116,46 +113,50 @@ services:
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile.backend
+    # List-form environment. Entries with `=` are static (shipped with
+    # every deployment). Entries without `=` are passthrough from the
+    # calling env — local compose reads them from .env, Railway reads
+    # them from the service's Variables tab. No `${VAR}` interpolation
+    # anywhere because Railway doesn't honor it.
     environment:
-      # ── Storage backend ──
-      GRAPH_BACKEND: surrealdb
-      SURREAL_URL: ws://surrealdb:8000
-      SURREAL_NAMESPACE: ${SURREAL_NAMESPACE:-mirofish}
-      SURREAL_DATABASE: ${SURREAL_DATABASE:-production}
-      SURREAL_USER: ${SURREAL_USER:-root}
-      # No default here — the surrealdb service above already enforces
-      # this via ${SURREAL_PASSWORD:?...}, so by the time Compose
-      # reaches the backend, the variable is guaranteed to be set.
-      # A `:-changeme` default here would cause a silent mismatch
-      # between the DB root password and what the backend connects
-      # with if anyone ever bypassed the surrealdb guard.
-      SURREAL_PASSWORD: ${SURREAL_PASSWORD}
+      # ── Storage backend (static — never changes) ──
+      - GRAPH_BACKEND=surrealdb
+      - SURREAL_URL=ws://surrealdb:8000
+      - SURREAL_NAMESPACE=mirofish
+      - SURREAL_DATABASE=production
+      - SURREAL_USER=root
 
-      # ── Primary LLM (required) ──
-      LLM_API_KEY: ${LLM_API_KEY}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
-      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-gpt-4o-mini}
+      # ── LLM defaults: Fireworks production stack ──
+      - LLM_BASE_URL=https://api.fireworks.ai/inference/v1
+      - LLM_MODEL_NAME=accounts/fireworks/models/minimax-m2p5
+      - LLM_BOOST_BASE_URL=https://api.fireworks.ai/inference/v1
+      - LLM_BOOST_MODEL_NAME=accounts/fireworks/models/gpt-oss-120b
+      - EMBEDDING_PROVIDER=openai
+      - EMBEDDING_BASE_URL=https://api.fireworks.ai/inference
+      - EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+      - EMBEDDING_DIMENSIONS=768
 
-      # ── Boost LLM (optional; used for reasoning-heavy tasks like
-      # report outline planning). Falls back to the primary LLM above
-      # if the boost variables are unset. ──
-      LLM_BOOST_API_KEY: ${LLM_BOOST_API_KEY:-${LLM_API_KEY}}
-      LLM_BOOST_BASE_URL: ${LLM_BOOST_BASE_URL:-${LLM_BASE_URL:-https://api.openai.com/v1}}
-      LLM_BOOST_MODEL_NAME: ${LLM_BOOST_MODEL_NAME:-${LLM_MODEL_NAME:-gpt-4o-mini}}
+      # ── TWHIN-BERT sidecar (internal) ──
+      - TWHIN_URL=http://twhin-sidecar:7001
 
-      # ── Graph embedding model (nomic-embed via Fireworks by default) ──
-      EMBEDDING_PROVIDER: openai
-      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-${LLM_API_KEY}}
-      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.fireworks.ai/inference}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
-      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      # ── Flask server (internal) ──
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=5001
 
-      # ── TWHIN-BERT recommender sidecar (internal URL) ──
-      TWHIN_URL: http://twhin-sidecar:7001
+      # ── User-provided secrets (required) ──
+      # Set these in your .env (local) or service Variables tab
+      # (Railway). LLM_API_KEY is also used as the default for
+      # LLM_BOOST_API_KEY and EMBEDDING_API_KEY by the backend code
+      # when those are unset — you only need one key if you stay
+      # on Fireworks.
+      - LLM_API_KEY
+      - SURREAL_PASS
 
-      # ── Flask server ──
-      FLASK_HOST: 0.0.0.0
-      FLASK_PORT: "5001"
+      # ── User-provided overrides (optional) ──
+      # Override the Fireworks defaults above by setting these on
+      # your local .env or Railway Variables tab.
+      - LLM_BOOST_API_KEY
+      - EMBEDDING_API_KEY
     # Backend is internal-only by default. MCP is the public entry
     # point (see the mcp service below) and proxies to the backend
     # inside the compose network. The REST API is reachable on the

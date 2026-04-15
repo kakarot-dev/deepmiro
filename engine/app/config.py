@@ -32,10 +32,23 @@ class Config:
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
 
-    # Boost LLM配置（高质量模型，用于报告和人设生成）
-    LLM_BOOST_API_KEY = os.environ.get('LLM_BOOST_API_KEY', '')
-    LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL', '')
-    LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME', '')
+    # Boost LLM (high-quality model for report + persona generation).
+    # Each boost var falls back to the corresponding primary LLM var
+    # when unset — so users on a single-provider setup (e.g. one
+    # Fireworks key for everything) don't have to duplicate the same
+    # value across three env vars.
+    LLM_BOOST_API_KEY = (
+        os.environ.get('LLM_BOOST_API_KEY')
+        or os.environ.get('LLM_API_KEY', '')
+    )
+    LLM_BOOST_BASE_URL = (
+        os.environ.get('LLM_BOOST_BASE_URL')
+        or os.environ.get('LLM_BASE_URL', '')
+    )
+    LLM_BOOST_MODEL_NAME = (
+        os.environ.get('LLM_BOOST_MODEL_NAME')
+        or os.environ.get('LLM_MODEL_NAME', '')
+    )
     
     # Zep配置 (legacy fallback -- only needed when GRAPH_BACKEND=zep)
 
@@ -47,7 +60,15 @@ class Config:
     SURREAL_NAMESPACE = os.environ.get('SURREAL_NAMESPACE', 'mirofish')
     SURREAL_DATABASE = os.environ.get('SURREAL_DATABASE', 'production')
     SURREAL_USER = os.environ.get('SURREAL_USER', 'root')
-    SURREAL_PASSWORD = os.environ.get('SURREAL_PASSWORD', '')
+    # SURREAL_PASS is SurrealDB's native env var name (read by the
+    # `surreal start` CLI directly). SURREAL_PASSWORD is our legacy
+    # name from MiroFish days. Accept either so docker-compose and
+    # helm deployments can use the native SurrealDB name without
+    # breaking older .env files.
+    SURREAL_PASSWORD = (
+        os.environ.get('SURREAL_PASS')
+        or os.environ.get('SURREAL_PASSWORD', '')
+    )
 
     # Embedding配置 (used by SurrealDB backend for vector search)
     EMBEDDING_PROVIDER = os.environ.get('EMBEDDING_PROVIDER', 'openai')
