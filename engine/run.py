@@ -23,14 +23,17 @@ from app.config import Config
 
 
 def main():
-    """主函数"""
-    # 验证配置
+    """Entry point for the DeepMiro backend."""
     errors = Config.validate()
     if errors:
-        print("配置错误:")
+        print("Configuration error — backend cannot start:", file=sys.stderr)
         for err in errors:
-            print(f"  - {err}")
-        print("\n请检查 .env 文件中的配置")
+            print(f"  • {err}", file=sys.stderr)
+        print(
+            "\nSet these in your .env file (local docker compose) or in "
+            "the Variables tab (Railway / hosting platform) and redeploy.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     
     # 创建应用

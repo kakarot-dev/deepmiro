@@ -92,15 +92,28 @@ class Config:
     
     @classmethod
     def validate(cls):
-        """验证必要配置"""
+        """Return a list of missing-required-config error messages."""
         errors = []
         if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
+            errors.append(
+                "LLM_API_KEY is not set. Get a key from your LLM provider "
+                "(Fireworks, OpenAI, etc.) and set it in your .env file or "
+                "the Railway Variables tab."
+            )
         # Validate SurrealDB config when using that backend
         if cls.GRAPH_BACKEND == 'surrealdb':
             if not cls.SURREAL_URL:
-                errors.append("SURREAL_URL 未配置")
+                errors.append(
+                    "SURREAL_URL is not set. Point this at the SurrealDB "
+                    "service URL (ws://surrealdb:8000 in docker-compose, "
+                    "ws://<chart>-surreal:8000 in helm)."
+                )
             if not cls.SURREAL_PASSWORD:
-                errors.append("SURREAL_PASSWORD 未配置")
+                errors.append(
+                    "SURREAL_PASSWORD is not set. Generate a strong value "
+                    "with `openssl rand -hex 32` and set it in your .env "
+                    "file or the Railway Variables tab. It must match the "
+                    "password the surrealdb service was started with."
+                )
         return errors
 
