@@ -576,24 +576,42 @@ class SimulationRunner:
         return state
     
     @classmethod
+    def _tail_sim_log(cls, sim_dir: str, simulation_id: str, position: int) -> int:
+        """Forward new lines from simulation.log to stderr so Railway captures them."""
+        log_path = os.path.join(sim_dir, "simulation.log")
+        if not os.path.exists(log_path):
+            return position
+        import sys
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                f.seek(position)
+                for line in f:
+                    # Prefix with sim ID so interleaved logs are traceable
+                    sys.stderr.write(f"[sim:{simulation_id}] {line}")
+                return f.tell()
+        except Exception:
+            return position
+
+    @classmethod
     def _monitor_simulation(cls, simulation_id: str, locale: str = 'zh'):
         """监控模拟进程，解析动作日志"""
         set_locale(locale)
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
-        
+
         # 新的日志结构：分平台的动作日志
         twitter_actions_log = os.path.join(sim_dir, "twitter", "actions.jsonl")
         reddit_actions_log = os.path.join(sim_dir, "reddit", "actions.jsonl")
-        
+
         process = cls._processes.get(simulation_id)
         state = cls.get_run_state(simulation_id)
-        
+
         if not process or not state:
             return
-        
+
         twitter_position = 0
         reddit_position = 0
-        
+        sim_log_position = 0
+
         try:
             while process.poll() is None:  # 进程仍在运行
                 # 读取 Twitter 动作日志
@@ -601,13 +619,18 @@ class SimulationRunner:
                     twitter_position = cls._read_action_log(
                         twitter_actions_log, twitter_position, state, "twitter"
                     )
-                
+
                 # 读取 Reddit 动作日志
                 if os.path.exists(reddit_actions_log):
                     reddit_position = cls._read_action_log(
                         reddit_actions_log, reddit_position, state, "reddit"
                     )
-                
+
+                # Forward subprocess log to stderr (Railway captures this)
+                sim_log_position = cls._tail_sim_log(
+                    sim_dir, simulation_id, sim_log_position
+                )
+
                 # 更新状态
                 cls._save_run_state(state)
                 time.sleep(2)
@@ -617,7 +640,9 @@ class SimulationRunner:
                 cls._read_action_log(twitter_actions_log, twitter_position, state, "twitter")
             if os.path.exists(reddit_actions_log):
                 cls._read_action_log(reddit_actions_log, reddit_position, state, "reddit")
-            
+            # Final flush of subprocess log
+            cls._tail_sim_log(sim_dir, simulation_id, sim_log_position)
+
             # 进程结束
             exit_code = process.returncode
             

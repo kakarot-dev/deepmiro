@@ -128,8 +128,36 @@ class SurrealDBStorage(GraphStorage):
     # Retry wrapper
     # ----------------------------------------------------------------
 
+    # Error substrings that indicate a dead WebSocket connection.
+    # These surface as various exception types depending on the SDK and
+    # websockets library version, so we match by message content rather
+    # than exception class.
+    _WS_RETRIABLE_PATTERNS = (
+        "close frame",
+        "connection closed",
+        "websocket",
+        "broken pipe",
+        "reset by peer",
+        "connection reset",
+        "eof occurred",
+    )
+
+    def _reconnect(self) -> None:
+        """Tear down the current connection and establish a new one."""
+        try:
+            self.close()
+        except Exception:
+            pass
+        self.connect()
+
     def _with_retry(self, fn: Callable, *args, **kwargs) -> Any:
-        """Execute a callable with retry on transient errors."""
+        """Execute a callable with retry on transient errors.
+
+        Catches both standard network errors and WebSocket-specific
+        errors (e.g. "no close frame received or sent" from Railway's
+        envoy proxy idle-dropping WS connections). On any retriable
+        failure, reconnects before the next attempt.
+        """
         last_error: Optional[Exception] = None
         for attempt in range(self.MAX_RETRIES):
             try:
@@ -138,15 +166,30 @@ class SurrealDBStorage(GraphStorage):
                 last_error = exc
                 wait = self.RETRY_DELAY_BASE * (2 ** attempt)
                 logger.warning(
-                    "SurrealDB transient error (attempt %d/%d), retrying in %ds: %s",
+                    "SurrealDB transient error (attempt %d/%d), reconnecting in %ds: %s",
                     attempt + 1,
                     self.MAX_RETRIES,
                     wait,
                     exc,
                 )
                 time.sleep(wait)
-            except Exception:
-                raise
+                self._reconnect()
+            except Exception as exc:
+                err_msg = str(exc).lower()
+                if any(p in err_msg for p in self._WS_RETRIABLE_PATTERNS):
+                    last_error = exc
+                    wait = self.RETRY_DELAY_BASE * (2 ** attempt)
+                    logger.warning(
+                        "SurrealDB WebSocket error (attempt %d/%d), reconnecting in %ds: %s",
+                        attempt + 1,
+                        self.MAX_RETRIES,
+                        wait,
+                        exc,
+                    )
+                    time.sleep(wait)
+                    self._reconnect()
+                else:
+                    raise
         raise last_error  # type: ignore[misc]
 
     def _query(self, surql: str, params: Optional[Dict[str, Any]] = None) -> list:
