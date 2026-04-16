@@ -105,21 +105,3 @@ jobs:
           files: mcp-server/deepmiro.mcpb
           tag_name: ${{ github.ref_name }}
 
-  publish-mcp-registry:
-    needs: changes
-    if: needs.changes.outputs.mcp == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install mcp-publisher
-        run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
-            | tar xz mcp-publisher
-          sudo mv mcp-publisher /usr/local/bin/
-      - name: Login via GitHub OIDC
-        run: mcp-publisher login github-oidc
-      - name: Publish to MCP registry
-        run: mcp-publisher publish
