@@ -1182,6 +1182,18 @@ async def run_twitter_simulation(
         semaphore=llm_semaphore,
     )
 
+    # ── Cached TWHIN-BERT rec system (Twitter) ────────────────────
+    # MUST replace update_rec_table BEFORE env.reset() — otherwise
+    # OASIS's default reset() loads Twitter/twhin-bert-base locally
+    # (~1.5 GB) inside the subprocess, which hangs or OOMs on
+    # memory-constrained hosts like Railway. The sidecar serves the
+    # same model over HTTP from a single shared container.
+    if hasattr(result.env, 'platform'):
+        result.env.platform.update_rec_table = create_twhin_rec_updater(
+            result.env.platform, log_info,
+        )
+        log_info("TWHIN-BERT cached rec enabled (sidecar mode)")
+
     await result.env.reset()
 
     # Enable WAL mode for concurrent read access during simulation
@@ -1190,13 +1202,6 @@ async def run_twitter_simulation(
     _conn.close()
 
     log_info(f"环境已启动 (semaphore={llm_semaphore})")
-
-    # ── Cached TWHIN-BERT rec system (Twitter) ────────────────────
-    if hasattr(result.env, 'platform'):
-        result.env.platform.update_rec_table = create_twhin_rec_updater(
-            result.env.platform, log_info,
-        )
-        log_info("TWHIN-BERT cached rec enabled")
 
     # AVM smart paging + dynamic persona rebuild (Option D — drift fix)
     twitter_pager = None
@@ -1462,6 +1467,14 @@ async def run_reddit_simulation(
         semaphore=llm_semaphore,
     )
 
+    # Replace rec system BEFORE env.reset() — same reason as Twitter
+    # (see comment above). Prevents local TWHIN-BERT model load.
+    if hasattr(result.env, 'platform'):
+        result.env.platform.update_rec_table = create_twhin_rec_updater(
+            result.env.platform, log_info, suffix=" Reddit",
+        )
+        log_info("TWHIN-BERT cached rec enabled (Reddit, sidecar mode)")
+
     await result.env.reset()
 
     # Enable WAL mode for concurrent read access during simulation
@@ -1470,13 +1483,6 @@ async def run_reddit_simulation(
     _conn.close()
 
     log_info(f"环境已启动 (semaphore={llm_semaphore})")
-
-    # ── Cached TWHIN-BERT rec system (Reddit) ──────────────────────
-    if hasattr(result.env, 'platform'):
-        result.env.platform.update_rec_table = create_twhin_rec_updater(
-            result.env.platform, log_info, suffix=" Reddit",
-        )
-        log_info("TWHIN-BERT cached rec enabled (Reddit)")
 
     # AVM smart paging + dynamic persona rebuild (Option D — drift fix)
     reddit_pager = None
