@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "deepmiro",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Swarm prediction engine — simulate how communities react to events, policies, and announcements.",
   "author": {
     "name": "kakarot-dev",
@@ -17,6 +17,12 @@
       "description": "Get your key at deepmiro.org/dashboard",
       "sensitive": true,
       "required": true
+    },
+    "server_url": {
+      "type": "string",
+      "title": "DeepMiro Server URL",
+      "description": "Default: hosted API. Change only if self-hosting (e.g. http://localhost:5001)",
+      "required": false
     }
   },
   "server": {
@@ -27,7 +33,8 @@
       "args": ["${__dirname}/dist/index.js"],
       "env": {
         "TRANSPORT": "stdio",
-        "DEEPMIRO_API_KEY": "${user_config.api_key}"
+        "DEEPMIRO_API_KEY": "${user_config.api_key}",
+        "MIROFISH_URL": "${user_config.server_url}"
       }
     }
   }
