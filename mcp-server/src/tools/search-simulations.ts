@@ -35,7 +35,7 @@ export function registerSearchSimulations(server: McpServer, client: MirofishCli
                     simulation_id: s.simulation_id,
                     project_name: s.project_name,
                     requirement: s.simulation_requirement,
-                    status: s.status,
+                    state: s.state,
                     created_at: s.created_at,
                   })),
                 },

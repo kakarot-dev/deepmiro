@@ -36,12 +36,12 @@ export function registerInterviewAgent(server: McpServer, client: MirofishClient
           throw new McpError(ErrorCode.InternalError, "Backend unreachable. Try again shortly.");
         }
 
-        const result = await client.interviewAgent(
-          args.simulation_id,
-          args.agent_id,
-          args.message,
-          args.platform,
-        );
+        const result = await client.interviewAgent({
+          simulation_id: args.simulation_id,
+          agent_id: args.agent_id,
+          prompt: args.message,
+          platform: args.platform,
+        });
 
         const responses: string[] = [];
 

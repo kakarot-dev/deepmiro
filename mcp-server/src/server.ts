@@ -82,7 +82,7 @@ export function createMcpServer(config: MirofishConfig): {
             mimeType: "application/json",
             text: JSON.stringify({
               simulation_id: simulationId,
-              status: sim.status,
+              state: sim.state,
               report_available: report?.status === "completed",
               report_markdown: report?.markdown_content ?? null,
             }, null, 2),

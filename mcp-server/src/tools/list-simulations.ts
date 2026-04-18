@@ -28,7 +28,7 @@ export function registerListSimulations(server: McpServer, client: MirofishClien
           simulations: simulations.map((s) => ({
             simulation_id: s.simulation_id,
             project_name: s.project_name,
-            status: s.status,
+            state: s.state,
             entities_count: s.entities_count,
             created_at: s.created_at,
           })),

@@ -26,22 +26,24 @@ export function registerCancelSimulation(server: McpServer, client: MirofishClie
     },
     async (args) => {
       try {
-        const runStatus = await client.cancelSimulation(args.simulation_id);
+        const snapshot = await client.cancelSimulation(args.simulation_id);
+        const total =
+          snapshot.twitter_actions_count + snapshot.reddit_actions_count;
         return {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify(
                 {
-                  simulation_id: runStatus.simulation_id,
-                  runner_status: runStatus.runner_status,
-                  twitter_actions_count: runStatus.twitter_actions_count,
-                  reddit_actions_count: runStatus.reddit_actions_count,
-                  total_actions: runStatus.twitter_actions_count + runStatus.reddit_actions_count,
-                  completed_at: runStatus.completed_at,
+                  simulation_id: snapshot.simulation_id,
+                  state: snapshot.state,
+                  twitter_actions_count: snapshot.twitter_actions_count,
+                  reddit_actions_count: snapshot.reddit_actions_count,
+                  total_actions: total,
+                  completed_at: snapshot.completed_at,
                   message:
                     `Simulation ${args.simulation_id} cancelled. ` +
-                    `${runStatus.twitter_actions_count + runStatus.reddit_actions_count} actions were captured before termination.`,
+                    `${total} actions were captured before termination.`,
                 },
                 null,
                 2,

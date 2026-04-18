@@ -10,7 +10,9 @@ const inputSchema = {
   prompt: z
     .string()
     .min(10)
-    .describe("Scenario description. E.g. 'How will crypto twitter react to a new ETH ETF rejection?'"),
+    .describe(
+      "Scenario description. E.g. 'How will crypto twitter react to a new ETH ETF rejection?'",
+    ),
   preset: z
     .enum(["quick", "standard", "deep"])
     .optional()
@@ -24,10 +26,15 @@ const inputSchema = {
   document_id: z
     .string()
     .optional()
-    .describe("ID of a pre-uploaded document (from upload_document tool). Skips file upload and uses server-side sanitized text."),
+    .describe(
+      "ID of a pre-uploaded document (from upload_document tool). Skips file upload and uses server-side sanitized text.",
+    ),
 };
 
-export function registerCreateSimulation(server: McpServer, client: MirofishClient): void {
+export function registerCreateSimulation(
+  server: McpServer,
+  client: MirofishClient,
+): void {
   server.registerTool(
     "create_simulation",
     {
@@ -38,15 +45,15 @@ export function registerCreateSimulation(server: McpServer, client: MirofishClie
         "Add specific people, companies, organizations, and opposing viewpoints. Show the enriched prompt " +
         "to the user for confirmation first.\n\n" +
         "If the user provides a document (PDF, MD, TXT), call upload_document first and pass the returned document_id.\n\n" +
-        "Returns immediately with a simulation_id. Then call simulation_status to wait for completion — " +
-        "it long-polls (each call waits up to 50s for the next state change), so you only need to call it a few times. " +
-        "When status returns phase=completed, the report is included in the response.",
+        "Returns immediately with simulation_id. Call simulation_status to wait for completion — " +
+        "each call blocks up to 50s for the next state change, so you only need a few. " +
+        "When status returns state=COMPLETED, the full report is included inline.",
       inputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
-        const sim = await client.createSimulation({
+        const { simulation_id } = await client.createAndRun({
           prompt: args.prompt,
           documentId: args.document_id,
           preset: args.preset,
@@ -54,16 +61,17 @@ export function registerCreateSimulation(server: McpServer, client: MirofishClie
           rounds: args.rounds,
           platform: args.platform,
         });
-
         return {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify(
                 {
-                  simulation_id: sim.simulation_id,
+                  simulation_id,
                   status: "running",
-                  message: "Prediction started. Call simulation_status to wait for completion (it long-polls).",
+                  message:
+                    "Prediction started. Call simulation_status to wait for completion " +
+                    "(long-polls; returns report when done).",
                 },
                 null,
                 2,

@@ -15,7 +15,7 @@ function paginate<T>(items: T[], limit: number, offset: number): { items: T[]; t
 
 async function buildOverview(client: MirofishClient, simulationId: string): Promise<Record<string, unknown>> {
   const [sim, profiles, config, agentStats, timeline] = await Promise.all([
-    client.getSimulation(simulationId).catch(() => null),
+    client.getStatus(simulationId).catch(() => null),
     client.getSimulationProfiles(simulationId).catch(() => []),
     client.getSimulationConfig(simulationId).catch(() => ({})),
     client.getAgentStats(simulationId).catch(() => ({})),
@@ -140,19 +140,26 @@ export function registerSimulationData(server: McpServer, client: MirofishClient
             break;
 
           case "actions": {
-            const all = await client.getSimulationActions(args.simulation_id, {
+            const resp = await client.getSimulationActions(args.simulation_id, {
               platform: args.platform,
-              agent_name: args.agent_name,
-              action_type: args.action_type,
               limit: 500, // fetch more, paginate client-side
             });
-            data = paginate(all as any[], limit, offset);
+            let items = resp.actions as any[];
+            if (args.agent_name) {
+              const q = args.agent_name.toLowerCase();
+              items = items.filter((a) =>
+                String(a.agent_name ?? "").toLowerCase().includes(q),
+              );
+            }
+            if (args.action_type) {
+              items = items.filter((a) => a.action_type === args.action_type);
+            }
+            data = paginate(items, limit, offset);
             break;
           }
 
           case "posts": {
             data = await client.getSimulationPosts(args.simulation_id, {
-              platform: args.platform,
               limit,
               offset,
             });
