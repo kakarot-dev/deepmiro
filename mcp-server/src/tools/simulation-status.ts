@@ -22,11 +22,11 @@ function snapshotKey(s: { phase?: string; current_round?: number; total_actions?
   return `${s.phase ?? ""}|${s.current_round ?? 0}|${s.total_actions ?? 0}|${s.report_status ?? ""}`;
 }
 
-/** Extract content from action_args for content-producing actions */
+/** Extract content from action_args for content-producing actions (full, not truncated) */
 function extractContent(action: AgentAction): string | undefined {
   const content = action.action_args?.content;
   if (typeof content !== "string" || !content) return undefined;
-  return content.length > 120 ? content.slice(0, 117) + "..." : content;
+  return content;
 }
 
 export function registerSimulationStatus(server: McpServer, client: MirofishClient): void {
@@ -298,7 +298,7 @@ async function resolveRunningStatus(
       : await client.getSimulationRunStatus(sim.simulation_id);
 
     const recentActions = (runStatus.recent_actions ?? [])
-      .slice(-5)
+      .slice(-15)
       .map((a: AgentAction) => ({
         agent: a.agent_name,
         action: a.action_type,
@@ -307,11 +307,36 @@ async function resolveRunningStatus(
         content: extractContent(a),
       }));
 
+    // Pull recent posts directly — these have full content and are richer
+    // narration material than action log summaries
+    let recentPosts: Array<{ agent: string; content: string; platform?: string; likes?: number; round?: number }> = [];
+    try {
+      const postsResp = await (client as any).getSimulationPosts?.(sim.simulation_id, { limit: 8 }) as
+        | { posts?: Array<{ user_id: number; content: string; num_likes?: number }> }
+        | undefined;
+      if (postsResp?.posts && postsResp.posts.length > 0) {
+        // Map user_id → agent name via the agents endpoint
+        const agentsMap = new Map<number, string>();
+        try {
+          const profiles = await (client as any).getSimulationProfiles?.(sim.simulation_id) as
+            | Array<{ user_id?: number; entity_name?: string; name?: string }>
+            | undefined;
+          (profiles ?? []).forEach((p) => {
+            if (p?.user_id !== undefined) {
+              agentsMap.set(p.user_id, p.entity_name ?? p.name ?? `Agent ${p.user_id}`);
+            }
+          });
+        } catch { /* fallback to user_id */ }
+
+        recentPosts = postsResp.posts.slice(0, 8).map((p) => ({
+          agent: agentsMap.get(p.user_id) ?? `Agent ${p.user_id}`,
+          content: p.content,
+          likes: p.num_likes,
+        }));
+      }
+    } catch { /* no posts yet */ }
+
     const totalActions = runStatus.twitter_actions_count + runStatus.reddit_actions_count;
-    const latestAction = recentActions.length > 0 ? recentActions[recentActions.length - 1] : null;
-    const actionSummary = latestAction
-      ? `${latestAction.agent} ${latestAction.action === "CREATE_POST" ? "posted" : latestAction.action.toLowerCase().replace("_", " ")} on ${latestAction.platform}${latestAction.content ? `: "${latestAction.content}"` : ""}`
-      : "";
 
     return {
       simulation_id: sim.simulation_id,
@@ -324,7 +349,11 @@ async function resolveRunningStatus(
       twitter_actions: runStatus.twitter_actions_count,
       reddit_actions: runStatus.reddit_actions_count,
       recent_actions: recentActions.length > 0 ? recentActions : undefined,
-      message: `Round ${runStatus.current_round}/${runStatus.total_rounds} — ${totalActions} actions so far.${actionSummary ? ` ${actionSummary}` : ""}`,
+      recent_posts: recentPosts.length > 0 ? recentPosts : undefined,
+      narration_hint: recentPosts.length > 0
+        ? "Narrate the simulation like a live blog. Quote 1-3 of the recent_posts directly using the agents' names — e.g. 'Elon Musk just posted: \"...\"'. Then briefly mention what other notable agents are doing. Keep it short (3-4 sentences). Do NOT mention round numbers, action counts, or simulation IDs."
+        : "The simulation is warming up. Tell the user agents are starting to react. Do NOT show round numbers or technical details.",
+      message: `Round ${runStatus.current_round}/${runStatus.total_rounds} — ${totalActions} actions so far.`,
     };
   } catch {
     return {

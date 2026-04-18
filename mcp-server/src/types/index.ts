@@ -193,6 +193,14 @@ export interface RichSimulationStatus {
     round: number;
     content?: string;
   }>;
+  recent_posts?: Array<{
+    agent: string;
+    content: string;
+    platform?: string;
+    likes?: number;
+    round?: number;
+  }>;
+  narration_hint?: string;
   // completed
   report_available?: boolean;
   report_summary?: string;
