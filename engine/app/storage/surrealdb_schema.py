@@ -185,63 +185,65 @@ DEFINE INDEX idx_action_platform ON simulation_action FIELDS simulation_id, plat
 SCHEMA_SIMULATION = """
 DEFINE TABLE simulation SCHEMAFULL;
 
+-- Core identity
 DEFINE FIELD simulation_id   ON simulation TYPE string   ASSERT $value != NONE;
 DEFINE FIELD project_id      ON simulation TYPE string   DEFAULT "";
-DEFINE FIELD graph_id        ON simulation TYPE string   DEFAULT "";
-DEFINE FIELD status          ON simulation TYPE string   DEFAULT "created";
+DEFINE FIELD graph_id        ON simulation TYPE option<string>;
+DEFINE FIELD user_id         ON simulation TYPE option<string>;
+
+-- Lifecycle state (v2: unified SimState enum)
+-- Values: CREATED, GRAPH_BUILDING, GENERATING_PROFILES, READY, SIMULATING,
+--         COMPLETED, FAILED, CANCELLED, INTERRUPTED
+DEFINE FIELD state           ON simulation TYPE string   DEFAULT "CREATED";
+
+-- Platform enablement
 DEFINE FIELD enable_twitter  ON simulation TYPE bool     DEFAULT true;
 DEFINE FIELD enable_reddit   ON simulation TYPE bool     DEFAULT true;
-DEFINE FIELD entities_count  ON simulation TYPE int      DEFAULT 0;
-DEFINE FIELD profiles_count  ON simulation TYPE int      DEFAULT 0;
-DEFINE FIELD entity_types    ON simulation TYPE array<string> DEFAULT [];
-DEFINE FIELD config_json        ON simulation TYPE string   DEFAULT "{}";
-DEFINE FIELD config_generated   ON simulation TYPE bool     DEFAULT false;
-DEFINE FIELD config_reasoning   ON simulation TYPE string   DEFAULT "";
-DEFINE FIELD current_round      ON simulation TYPE int      DEFAULT 0;
-DEFINE FIELD twitter_status     ON simulation TYPE string   DEFAULT "not_started";
-DEFINE FIELD reddit_status      ON simulation TYPE string   DEFAULT "not_started";
-DEFINE FIELD error              ON simulation TYPE option<string>;
-DEFINE FIELD user_id            ON simulation TYPE option<string>;
-DEFINE FIELD created_at      ON simulation TYPE datetime DEFAULT time::now();
-DEFINE FIELD updated_at      ON simulation TYPE datetime DEFAULT time::now();
+
+-- Round + time tracking (merged from old simulation_run table)
+DEFINE FIELD current_round              ON simulation TYPE int   DEFAULT 0;
+DEFINE FIELD total_rounds               ON simulation TYPE int   DEFAULT 0;
+DEFINE FIELD simulated_hours            ON simulation TYPE float DEFAULT 0.0;
+DEFINE FIELD total_simulation_hours     ON simulation TYPE float DEFAULT 0.0;
+DEFINE FIELD twitter_current_round      ON simulation TYPE int   DEFAULT 0;
+DEFINE FIELD reddit_current_round       ON simulation TYPE int   DEFAULT 0;
+DEFINE FIELD twitter_simulated_hours    ON simulation TYPE float DEFAULT 0.0;
+DEFINE FIELD reddit_simulated_hours     ON simulation TYPE float DEFAULT 0.0;
+DEFINE FIELD twitter_running            ON simulation TYPE bool  DEFAULT false;
+DEFINE FIELD reddit_running             ON simulation TYPE bool  DEFAULT false;
+DEFINE FIELD twitter_actions_count      ON simulation TYPE int   DEFAULT 0;
+DEFINE FIELD reddit_actions_count       ON simulation TYPE int   DEFAULT 0;
+DEFINE FIELD twitter_completed          ON simulation TYPE bool  DEFAULT false;
+DEFINE FIELD reddit_completed           ON simulation TYPE bool  DEFAULT false;
+
+-- Subprocess tracking
+DEFINE FIELD process_pid                ON simulation TYPE option<int>;
+
+-- Setup metadata
+DEFINE FIELD entities_count             ON simulation TYPE int     DEFAULT 0;
+DEFINE FIELD profiles_count             ON simulation TYPE int     DEFAULT 0;
+DEFINE FIELD config_generated           ON simulation TYPE bool    DEFAULT false;
+DEFINE FIELD config_reasoning           ON simulation TYPE string  DEFAULT "";
+
+-- Timestamps
+DEFINE FIELD started_at                 ON simulation TYPE option<datetime>;
+DEFINE FIELD created_at                 ON simulation TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at                 ON simulation TYPE datetime DEFAULT time::now();
+DEFINE FIELD completed_at               ON simulation TYPE option<datetime>;
+
+-- Failure info
+DEFINE FIELD error                      ON simulation TYPE option<string>;
 
 DEFINE INDEX idx_simulation_id      ON simulation FIELDS simulation_id UNIQUE;
 DEFINE INDEX idx_simulation_project ON simulation FIELDS project_id;
-DEFINE INDEX idx_simulation_status  ON simulation FIELDS status;
+DEFINE INDEX idx_simulation_state   ON simulation FIELDS state;
 DEFINE INDEX idx_simulation_user    ON simulation FIELDS user_id;
 """
 
-# ---------------------------------------------------------------------------
-# Simulation run table (replaces run_state.json)
-# ---------------------------------------------------------------------------
-
-SCHEMA_SIMULATION_RUN = """
-DEFINE TABLE simulation_run SCHEMAFULL;
-
-DEFINE FIELD simulation_id          ON simulation_run TYPE string  ASSERT $value != NONE;
-DEFINE FIELD runner_status          ON simulation_run TYPE string  DEFAULT "idle";
-DEFINE FIELD current_round          ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD total_rounds           ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD simulated_hours        ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD total_simulation_hours ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD twitter_current_round  ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD reddit_current_round   ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD twitter_simulated_hours ON simulation_run TYPE int    DEFAULT 0;
-DEFINE FIELD reddit_simulated_hours ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD twitter_running        ON simulation_run TYPE bool    DEFAULT false;
-DEFINE FIELD reddit_running         ON simulation_run TYPE bool    DEFAULT false;
-DEFINE FIELD twitter_actions_count  ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD reddit_actions_count   ON simulation_run TYPE int     DEFAULT 0;
-DEFINE FIELD twitter_completed      ON simulation_run TYPE bool    DEFAULT false;
-DEFINE FIELD reddit_completed       ON simulation_run TYPE bool    DEFAULT false;
-DEFINE FIELD process_pid            ON simulation_run TYPE option<int>;
-DEFINE FIELD started_at             ON simulation_run TYPE option<datetime>;
-DEFINE FIELD completed_at           ON simulation_run TYPE option<datetime>;
-DEFINE FIELD error                  ON simulation_run TYPE option<string>;
-
-DEFINE INDEX idx_run_sim_id ON simulation_run FIELDS simulation_id UNIQUE;
-DEFINE INDEX idx_run_status ON simulation_run FIELDS runner_status;
-"""
+# simulation_run table removed in v2 — state is a single row on the
+# `simulation` table. A one-shot migration drops the old table at
+# startup if it exists.
+SCHEMA_SIMULATION_RUN = "REMOVE TABLE IF EXISTS simulation_run;"
 
 # ---------------------------------------------------------------------------
 # Ontology table

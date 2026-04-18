@@ -1081,56 +1081,10 @@ class SurrealDBStorage(GraphStorage):
         logger.info("Created run state for simulation: %s", sim_id)
         return sim_id
 
-    def get_run_state(self, simulation_id: str) -> Optional[Dict[str, Any]]:
-        """Get run state by simulation_id."""
-        result = self._query(
-            "SELECT * FROM simulation_run WHERE simulation_id = $sid LIMIT 1;",
-            {"sid": simulation_id},
-        )
-        rows = self._rows(result)
-        return rows[0] if rows else None
-
-    def update_run_state(self, simulation_id: str, updates: Dict[str, Any]) -> None:
-        """Update run state fields."""
-        set_clauses = []
-        params: Dict[str, Any] = {"sid": simulation_id}
-        for key, value in updates.items():
-            if value == "time::now()":
-                set_clauses.append(f"{key} = time::now()")
-            else:
-                param_name = f"v_{key}"
-                set_clauses.append(f"{key} = ${param_name}")
-                params[param_name] = value
-        if not set_clauses:
-            return
-        set_str = ", ".join(set_clauses)
-        self._query(
-            f"UPDATE simulation_run SET {set_str} WHERE simulation_id = $sid;",
-            params,
-        )
-
-    def upsert_run_state(self, simulation_id: str, run_data: Dict[str, Any]) -> None:
-        """Upsert run state — create if not exists, update if exists."""
-        SKIP_FIELDS = {"simulation_id", "id"}
-        set_clauses = ["simulation_id = $sid", "updated_at = time::now()"]
-        params: Dict[str, Any] = {"sid": simulation_id}
-        for key, value in run_data.items():
-            if key in SKIP_FIELDS:
-                continue
-            if hasattr(value, 'isoformat'):
-                value = str(value)
-            if isinstance(value, set):
-                value = list(value)
-            if value is None:
-                continue
-            param_name = f"v_{key}"
-            set_clauses.append(f"{key} = ${param_name}")
-            params[param_name] = value
-        set_str = ", ".join(set_clauses)
-        self._query(
-            f"UPSERT simulation_run SET {set_str} WHERE simulation_id = $sid;",
-            params,
-        )
+    # simulation_run table removed in v2 — state is now a single row on
+    # `simulation` table, written via LifecycleStore. The methods that
+    # used to live here (get_run_state, update_run_state, upsert_run_state)
+    # are intentionally gone. Callers now use upsert_simulation().
 
     # ================================================================
     # Agent profile persistence
@@ -1278,22 +1232,27 @@ class SurrealDBStorage(GraphStorage):
     # ================================================================
 
     def detect_interrupted_simulations(self) -> List[Dict[str, Any]]:
-        """Find simulations marked as running but whose PID is no longer alive."""
+        """Find simulations marked as SIMULATING whose PID is no longer alive.
+
+        Reads the unified `simulation` table. Returns raw DB rows; the
+        recovery path in engine/app/__init__.py runs this check via the
+        LifecycleStore anyway, so in practice this is only used for
+        cross-pod diagnostics.
+        """
         result = self._query(
-            "SELECT * FROM simulation_run WHERE runner_status = 'running';",
+            "SELECT * FROM simulation WHERE state = 'SIMULATING';",
         )
         rows = self._rows(result)
         interrupted = []
         for row in rows:
             pid = row.get("process_pid")
-            if pid is not None:
-                import os as _os
-                try:
-                    _os.kill(pid, 0)  # check if process exists
-                except (OSError, ProcessLookupError):
-                    interrupted.append(row)
-            else:
-                # No PID recorded -- treat as interrupted
+            if pid is None:
+                interrupted.append(row)
+                continue
+            import os as _os
+            try:
+                _os.kill(pid, 0)  # check if process exists
+            except (OSError, ProcessLookupError):
                 interrupted.append(row)
         return interrupted
 

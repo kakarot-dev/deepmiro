@@ -1,254 +1,71 @@
 """
-OASIS模拟管理器
-管理Twitter和Reddit双平台并行模拟
-使用预设脚本 + LLM智能生成配置参数
+SimulationManager — creates sims, prepares their environment, lists them.
+
+Refactored to delegate ALL state persistence to lifecycle.store. This
+class now focuses on *orchestration*: the pipeline from a prompt →
+knowledge graph → agent profiles → simulation config.
+
+The old `SimulationState` dataclass is gone. Callers get a `SimSnapshot`
+(from lifecycle.store) whenever they need current state.
+
+The old `SimulationStatus` enum is gone. Everyone imports `SimState`
+from lifecycle.states.
 """
 
-import os
+from __future__ import annotations
+
 import json
-import shutil
-from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, field
+import logging
+import os
+import uuid
 from datetime import datetime
-from enum import Enum
+from typing import Any, Callable, Optional
 
 from ..config import Config
-from ..utils.logger import get_logger
-from .entity_reader import EntityReader, FilteredEntities
-from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
-from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
 from ..utils.locale import t
+from .entity_reader import EntityReader
+from .lifecycle import SimSnapshot, SimState, is_terminal, store
+from .oasis_profile_generator import OasisProfileGenerator
+from .simulation_config_generator import SimulationConfigGenerator
 
-logger = get_logger('mirofish.simulation')
+logger = logging.getLogger("mirofish.simulation_manager")
 
 
 def _get_surreal_storage():
-    """Get SurrealDB storage instance, or None if unavailable."""
+    """SurrealDB storage if configured, else None. Used only for multi-user
+    list queries (user_id filter lives in the DB, not state.json)."""
     try:
         from ..storage.factory import get_storage
-        storage = get_storage()
-        # Only use if it's the SurrealDB backend
         from ..storage.surrealdb_backend import SurrealDBStorage
+        storage = get_storage()
         if isinstance(storage, SurrealDBStorage):
             return storage
     except Exception as exc:
-        logger.warning("SurrealDB storage unavailable, file-only mode: %s", exc)
+        logger.warning("SurrealDB storage unavailable: %s", exc)
     return None
 
 
-class SimulationStatus(str, Enum):
-    """模拟状态"""
-    CREATED = "created"
-    PREPARING = "preparing"
-    READY = "ready"
-    RUNNING = "running"
-    PAUSED = "paused"
-    STOPPED = "stopped"          # 模拟被手动停止
-    COMPLETED = "completed"      # 模拟自然完成
-    FAILED = "failed"
-    INTERRUPTED = "interrupted"  # 进程意外终止（PID不存在���
-
-
-class PlatformType(str, Enum):
-    """平台类型"""
-    TWITTER = "twitter"
-    REDDIT = "reddit"
-
-
-@dataclass
-class SimulationState:
-    """模拟状态"""
-    simulation_id: str
-    project_id: str
-    graph_id: str
-    
-    # 平台启用状态
-    enable_twitter: bool = True
-    enable_reddit: bool = True
-    
-    # 状态
-    status: SimulationStatus = SimulationStatus.CREATED
-    
-    # 准备阶段数据
-    entities_count: int = 0
-    profiles_count: int = 0
-    entity_types: List[str] = field(default_factory=list)
-    
-    # 配置生成信息
-    config_generated: bool = False
-    config_reasoning: str = ""
-    
-    # 运行时数据
-    current_round: int = 0
-    twitter_status: str = "not_started"
-    reddit_status: str = "not_started"
-    
-    # 时间戳
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    
-    # 错误信息
-    error: Optional[str] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """完整状态字典（内部使用）"""
-        return {
-            "simulation_id": self.simulation_id,
-            "project_id": self.project_id,
-            "graph_id": self.graph_id,
-            "enable_twitter": self.enable_twitter,
-            "enable_reddit": self.enable_reddit,
-            "status": self.status.value,
-            "entities_count": self.entities_count,
-            "profiles_count": self.profiles_count,
-            "entity_types": list(self.entity_types) if isinstance(self.entity_types, set) else self.entity_types,
-            "config_generated": self.config_generated,
-            "config_reasoning": self.config_reasoning,
-            "current_round": self.current_round,
-            "twitter_status": self.twitter_status,
-            "reddit_status": self.reddit_status,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "error": self.error,
-        }
-    
-    def to_simple_dict(self) -> Dict[str, Any]:
-        """简化状态字典（API返回使用）"""
-        return {
-            "simulation_id": self.simulation_id,
-            "project_id": self.project_id,
-            "graph_id": self.graph_id,
-            "status": self.status.value,
-            "entities_count": self.entities_count,
-            "profiles_count": self.profiles_count,
-            "entity_types": self.entity_types,
-            "config_generated": self.config_generated,
-            "error": self.error,
-        }
-
-
 class SimulationManager:
-    """
-    模拟管理器
-    
-    核心功能：
-    1. 从Zep图谱读取实体并过滤
-    2. 生成OASIS Agent Profile
-    3. 使用LLM智能生成模拟配置参数
-    4. 准备预设脚本所需的所有文件
-    """
-    
-    # 模拟数据存储目录
-    SIMULATION_DATA_DIR = os.path.join(
-        os.path.dirname(__file__), 
-        '../../uploads/simulations'
-    )
-    
-    def __init__(self):
-        # 确保目录存在
+    """Creates simulations, prepares their environment, lists and queries."""
+
+    SIMULATION_DATA_DIR: str = Config.OASIS_SIMULATION_DATA_DIR
+
+    def __init__(self) -> None:
         os.makedirs(self.SIMULATION_DATA_DIR, exist_ok=True)
-        
-        # 内存中的模拟状态缓存
-        self._simulations: Dict[str, SimulationState] = {}
-    
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     def _get_simulation_dir(self, simulation_id: str) -> str:
-        """获取模拟数据目录"""
         sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
         os.makedirs(sim_dir, exist_ok=True)
         return sim_dir
-    
-    def _save_simulation_state(self, state: SimulationState):
-        """保存模拟状态到文件 + SurrealDB (dual write)"""
-        sim_dir = self._get_simulation_dir(state.simulation_id)
-        state_file = os.path.join(sim_dir, "state.json")
 
-        state.updated_at = datetime.now().isoformat()
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-        # File write (always -- backward compatible)
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
-
-        self._simulations[state.simulation_id] = state
-
-        # SurrealDB write (best-effort, thread-safe)
-        import threading
-        is_main = threading.current_thread() is threading.main_thread()
-        print(f"[SURREAL_SAVE] sim={state.simulation_id} status={state.status.value} config={state.config_generated} entities={state.entities_count} thread={'main' if is_main else 'bg'}", flush=True)
-        logger.info(
-            "SurrealDB save: sim=%s status=%s config=%s entities=%s thread=%s",
-            state.simulation_id, state.status.value, state.config_generated,
-            state.entities_count, "main" if is_main else "bg",
-        )
-        try:
-            if is_main:
-                storage = _get_surreal_storage()
-            else:
-                from ..storage.surrealdb_backend import SurrealDBStorage
-                from ..config import Config
-                http_url = Config.SURREAL_URL.replace("ws://", "http://").replace("wss://", "https://")
-                print(f"[SURREAL_SAVE] bg: connecting HTTP to {http_url}", flush=True)
-                storage = SurrealDBStorage(url=http_url)
-                print("[SURREAL_SAVE] bg: connected OK", flush=True)
-
-            if storage:
-                sim_data = state.to_dict()
-                sim_data["config_json"] = sim_data.get("config_json", "{}")
-                storage.upsert_simulation(state.simulation_id, sim_data)
-                print(f"[SURREAL_SAVE] SUCCESS: {state.simulation_id} status={state.status.value}", flush=True)
-            else:
-                print("[SURREAL_SAVE] no storage available", flush=True)
-        except Exception as exc:
-            print(f"[SURREAL_SAVE] FAILED: {type(exc).__name__}: {exc}", flush=True)
-    
-    def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
-        """从 SurrealDB 或文件加载模拟状态"""
-        if simulation_id in self._simulations:
-            return self._simulations[simulation_id]
-
-        data = None
-
-        # Try SurrealDB first
-        storage = _get_surreal_storage()
-        if storage:
-            try:
-                row = storage.get_simulation(simulation_id)
-                if row:
-                    data = row
-            except Exception as exc:
-                logger.warning("SurrealDB simulation load failed, falling back to file: %s", exc)
-
-        # Fall back to flat file
-        if data is None:
-            sim_dir = self._get_simulation_dir(simulation_id)
-            state_file = os.path.join(sim_dir, "state.json")
-            if not os.path.exists(state_file):
-                return None
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-        state = SimulationState(
-            simulation_id=simulation_id,
-            project_id=data.get("project_id", ""),
-            graph_id=data.get("graph_id", ""),
-            enable_twitter=data.get("enable_twitter", True),
-            enable_reddit=data.get("enable_reddit", True),
-            status=SimulationStatus(data.get("status", "created")),
-            entities_count=data.get("entities_count", 0),
-            profiles_count=data.get("profiles_count", 0),
-            entity_types=data.get("entity_types", []),
-            config_generated=data.get("config_generated", False),
-            config_reasoning=data.get("config_reasoning", ""),
-            current_round=data.get("current_round", 0),
-            twitter_status=data.get("twitter_status", "not_started"),
-            reddit_status=data.get("reddit_status", "not_started"),
-            created_at=str(data["created_at"]) if "created_at" in data else datetime.now().isoformat(),
-            updated_at=str(data["updated_at"]) if "updated_at" in data else datetime.now().isoformat(),
-            error=data.get("error"),
-        )
-
-        self._simulations[simulation_id] = state
-        return state
-    
     def create_simulation(
         self,
         project_id: str,
@@ -256,351 +73,332 @@ class SimulationManager:
         enable_twitter: bool = True,
         enable_reddit: bool = True,
         user_id: Optional[str] = None,
-    ) -> SimulationState:
-        """
-        创建新的模拟
-        
-        Args:
-            project_id: 项目ID
-            graph_id: Zep图谱ID
-            enable_twitter: 是否启用Twitter模拟
-            enable_reddit: 是否启用Reddit模拟
-            
-        Returns:
-            SimulationState
-        """
-        import uuid
+    ) -> SimSnapshot:
+        """Create a new simulation in CREATED state."""
         simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
-        
-        state = SimulationState(
-            simulation_id=simulation_id,
+
+        # Create the state.json via the store (emits STATE_CHANGED).
+        snapshot = store.create(
+            simulation_id,
             project_id=project_id,
             graph_id=graph_id,
             enable_twitter=enable_twitter,
             enable_reddit=enable_reddit,
-            status=SimulationStatus.CREATED,
         )
 
-        # SurrealDB: create the record directly (avoids update in _save)
+        # SurrealDB: create the row up-front so list_simulations queries
+        # by user_id work immediately. This is the only place user_id
+        # gets attached.
         storage = _get_surreal_storage()
-        if storage:
+        if storage and user_id:
             try:
-                sim_data = state.to_dict()
-                if user_id:
-                    sim_data["user_id"] = user_id
+                sim_data = snapshot.to_dict()
+                sim_data["user_id"] = user_id
                 storage.create_simulation(sim_data)
             except Exception as exc:
                 logger.warning("SurrealDB create_simulation failed: %s", exc)
 
-        self._save_simulation_state(state)
-        logger.info(f"创建模拟: {simulation_id}, project={project_id}, graph={graph_id}")
+        logger.info(
+            "Simulation created: %s project=%s graph=%s",
+            simulation_id, project_id, graph_id,
+        )
+        return snapshot
 
-        return state
-    
     def prepare_simulation(
         self,
         simulation_id: str,
         simulation_requirement: str,
         document_text: str,
-        defined_entity_types: Optional[List[str]] = None,
+        defined_entity_types: Optional[list[str]] = None,
         use_llm_for_profiles: bool = True,
-        progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
-    ) -> SimulationState:
+        progress_callback: Optional[Callable[..., None]] = None,
+        parallel_profile_count: int = 3,
+    ) -> SimSnapshot:
+        """Full preparation pipeline: entities → profiles → config.
+
+        Transitions through CREATED → GRAPH_BUILDING → GENERATING_PROFILES → READY.
+        (The GRAPH_BUILDING step here is really "reading/filtering the
+        already-built graph"; the full graph build happens upstream in
+        the graph API.)
         """
-        准备模拟环境（全程自动化）
-        
-        步骤：
-        1. 从Zep图谱读取并过滤实体
-        2. 为每个实体生成OASIS Agent Profile（可选LLM增强，支持并行）
-        3. 使用LLM智能生成模拟配置参数（时间、活跃度、发言频率等）
-        4. 保存配置文件和Profile文件
-        5. 复制预设脚本到模拟目录
-        
-        Args:
-            simulation_id: 模拟ID
-            simulation_requirement: 模拟需求描述（用于LLM生成配置）
-            document_text: 原始文档内容（用于LLM理解背景）
-            defined_entity_types: 预定义的实体类型（可选）
-            use_llm_for_profiles: 是否使用LLM生成详细人设
-            progress_callback: 进度回调函数 (stage, progress, message)
-            parallel_profile_count: 并行生成人设的数量，默认3
-            
-        Returns:
-            SimulationState
-        """
-        state = self._load_simulation_state(simulation_id)
-        if not state:
-            raise ValueError(f"模拟不存在: {simulation_id}")
-        
-        try:
-            state.status = SimulationStatus.PREPARING
-            self._save_simulation_state(state)
-            
-            sim_dir = self._get_simulation_dir(simulation_id)
-            
-            # ========== 阶段1: 读取并过滤实体 ==========
-            if progress_callback:
-                progress_callback("reading", 0, t('progress.connectingZepGraph'))
-            
-            reader = EntityReader()
-            
-            if progress_callback:
-                progress_callback("reading", 30, t('progress.readingNodeData'))
-            
-            filtered = reader.filter_defined_entities(
-                graph_id=state.graph_id,
-                defined_entity_types=defined_entity_types,
-                enrich_with_edges=True
+        snapshot = store.get(simulation_id)
+        if snapshot is None:
+            raise ValueError(f"Simulation not found: {simulation_id}")
+
+        if snapshot.state != SimState.CREATED:
+            raise ValueError(
+                f"Cannot prepare sim in state {snapshot.state.value}; must be CREATED"
             )
-            
-            state.entities_count = filtered.filtered_count
-            state.entity_types = list(filtered.entity_types)
-            
+
+        try:
+            # ─── Phase 1: read + filter entities from the graph ───
+            snapshot = store.transition(
+                simulation_id,
+                SimState.GRAPH_BUILDING,
+                reason="prepare_start",
+            )
+
+            if progress_callback:
+                progress_callback("reading", 0, t("progress.connectingZepGraph"))
+
+            reader = EntityReader()
+
+            if progress_callback:
+                progress_callback("reading", 30, t("progress.readingNodeData"))
+
+            filtered = reader.filter_defined_entities(
+                graph_id=snapshot.graph_id,
+                defined_entity_types=defined_entity_types,
+                enrich_with_edges=True,
+            )
+
+            snapshot = store.update(
+                simulation_id,
+                entities_count=filtered.filtered_count,
+            )
+
             if progress_callback:
                 progress_callback(
                     "reading", 100,
-                    t('progress.readingComplete', count=filtered.filtered_count),
+                    t("progress.readingComplete", count=filtered.filtered_count),
                     current=filtered.filtered_count,
-                    total=filtered.filtered_count
+                    total=filtered.filtered_count,
                 )
-            
+
             if filtered.filtered_count == 0:
-                state.status = SimulationStatus.FAILED
-                state.error = "没有找到符合条件的实体，请检查图谱是否正确构建"
-                self._save_simulation_state(state)
-                return state
-            
-            # ========== 阶段2: 生成Agent Profile ==========
+                store.transition(
+                    simulation_id,
+                    SimState.FAILED,
+                    reason="no_entities_after_filter",
+                    error="No entities matched filter criteria. "
+                          "Check that the knowledge graph was built correctly.",
+                )
+                return store.get(simulation_id)
+
+            # ─── Phase 2: generate agent profiles ───
+            snapshot = store.transition(
+                simulation_id,
+                SimState.GENERATING_PROFILES,
+                reason="profiles_start",
+            )
+
             total_entities = len(filtered.entities)
-            
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 0,
-                    t('progress.startGenerating'),
-                    current=0,
-                    total=total_entities
+                    t("progress.startGenerating"),
+                    current=0, total=total_entities,
                 )
-            
-            # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
-            generator = OasisProfileGenerator(graph_id=state.graph_id)
-            
-            def profile_progress(current, total, msg):
+
+            generator = OasisProfileGenerator(graph_id=snapshot.graph_id)
+
+            def profile_progress(current: int, total: int, msg: str) -> None:
+                # Update the snapshot so MCP/UI polling sees profile progress.
+                try:
+                    store.update(simulation_id, profiles_count=current)
+                except Exception:
+                    pass
                 if progress_callback:
                     progress_callback(
-                        "generating_profiles", 
-                        int(current / total * 100), 
+                        "generating_profiles",
+                        int(current / max(total, 1) * 100),
                         msg,
-                        current=current,
-                        total=total,
-                        item_name=msg
+                        current=current, total=total, item_name=msg,
                     )
-            
-            # 设置实时保存的文件路径（优先使用 Reddit JSON 格式）
+
+            sim_dir = self._get_simulation_dir(simulation_id)
             realtime_output_path = None
             realtime_platform = "reddit"
-            if state.enable_reddit:
+            if snapshot.enable_reddit:
                 realtime_output_path = os.path.join(sim_dir, "reddit_profiles.json")
                 realtime_platform = "reddit"
-            elif state.enable_twitter:
+            elif snapshot.enable_twitter:
                 realtime_output_path = os.path.join(sim_dir, "twitter_profiles.csv")
                 realtime_platform = "twitter"
-            
+
             profiles = generator.generate_profiles_from_entities(
                 entities=filtered.entities,
                 use_llm=use_llm_for_profiles,
                 progress_callback=profile_progress,
-                graph_id=state.graph_id,  # 传入graph_id用于Zep检索
-                parallel_count=parallel_profile_count,  # 并行生成数量
-                realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                graph_id=snapshot.graph_id,
+                parallel_count=parallel_profile_count,
+                realtime_output_path=realtime_output_path,
+                output_platform=realtime_platform,
             )
-            
-            state.profiles_count = len(profiles)
-            
-            # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
-            # Reddit 已经在生成过程中实时保存了，这里再保存一次确保完整性
+
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 95,
-                    t('progress.savingProfiles'),
-                    current=total_entities,
-                    total=total_entities
+                    t("progress.savingProfiles"),
+                    current=total_entities, total=total_entities,
                 )
-            
-            if state.enable_reddit:
+
+            if snapshot.enable_reddit:
                 generator.save_profiles(
                     profiles=profiles,
                     file_path=os.path.join(sim_dir, "reddit_profiles.json"),
-                    platform="reddit"
+                    platform="reddit",
                 )
-            
-            if state.enable_twitter:
-                # Twitter使用CSV格式！这是OASIS的要求
+            if snapshot.enable_twitter:
                 generator.save_profiles(
                     profiles=profiles,
                     file_path=os.path.join(sim_dir, "twitter_profiles.csv"),
-                    platform="twitter"
+                    platform="twitter",
                 )
-            
+
+            snapshot = store.update(simulation_id, profiles_count=len(profiles))
+
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 100,
-                    t('progress.profilesComplete', count=len(profiles)),
-                    current=len(profiles),
-                    total=len(profiles)
+                    t("progress.profilesComplete", count=len(profiles)),
+                    current=len(profiles), total=len(profiles),
                 )
-            
-            # ========== 阶段3: LLM智能生成模拟配置 ==========
+
+            # ─── Phase 3: generate simulation config via LLM ───
             if progress_callback:
                 progress_callback(
                     "generating_config", 0,
-                    t('progress.analyzingRequirements'),
-                    current=0,
-                    total=3
+                    t("progress.analyzingRequirements"),
+                    current=0, total=3,
                 )
-            
+
             config_generator = SimulationConfigGenerator()
-            
+
             if progress_callback:
                 progress_callback(
                     "generating_config", 30,
-                    t('progress.callingLLMConfig'),
-                    current=1,
-                    total=3
+                    t("progress.callingLLMConfig"),
+                    current=1, total=3,
                 )
-            
+
             sim_params = config_generator.generate_config(
                 simulation_id=simulation_id,
-                project_id=state.project_id,
-                graph_id=state.graph_id,
+                project_id=snapshot.project_id,
+                graph_id=snapshot.graph_id,
                 simulation_requirement=simulation_requirement,
                 document_text=document_text,
                 entities=filtered.entities,
-                enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_twitter=snapshot.enable_twitter,
+                enable_reddit=snapshot.enable_reddit,
             )
-            
+
             if progress_callback:
                 progress_callback(
                     "generating_config", 70,
-                    t('progress.savingConfigFiles'),
-                    current=2,
-                    total=3
+                    t("progress.savingConfigFiles"),
+                    current=2, total=3,
                 )
-            
-            # 保存配置文件
+
             config_path = os.path.join(sim_dir, "simulation_config.json")
-            with open(config_path, 'w', encoding='utf-8') as f:
+            with open(config_path, "w", encoding="utf-8") as f:
                 f.write(sim_params.to_json())
-            
-            state.config_generated = True
-            state.config_reasoning = sim_params.generation_reasoning
-            
+
             if progress_callback:
                 progress_callback(
                     "generating_config", 100,
-                    t('progress.configComplete'),
-                    current=3,
-                    total=3
+                    t("progress.configComplete"),
+                    current=3, total=3,
                 )
-            
-            # 注意：运行脚本保留在 backend/scripts/ 目录，不再复制到模拟目录
-            # 启动模拟时，simulation_runner 会从 scripts/ 目录运行脚本
-            
-            # 更新状态
-            state.status = SimulationStatus.READY
-            self._save_simulation_state(state)
-            
-            logger.info(f"模拟准备完成: {simulation_id}, "
-                       f"entities={state.entities_count}, profiles={state.profiles_count}")
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"模拟准备失败: {simulation_id}, error={str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            state.status = SimulationStatus.FAILED
-            state.error = str(e)
-            self._save_simulation_state(state)
-            raise
-    
-    def get_simulation(self, simulation_id: str) -> Optional[SimulationState]:
-        """获取模拟状态"""
-        return self._load_simulation_state(simulation_id)
-    
-    def list_simulations(self, project_id: Optional[str] = None, user_id: Optional[str] = None) -> List[SimulationState]:
-        """列出所有模拟 (SurrealDB preferred, file fallback).
-        If user_id is provided, only return simulations owned by that user.
-        """
-        simulations = []
-        seen_ids = set()
 
-        # Try SurrealDB first
+            # ─── Phase 4: transition to READY ───
+            snapshot = store.transition(
+                simulation_id,
+                SimState.READY,
+                reason="prepare_complete",
+                config_generated=True,
+                config_reasoning=sim_params.generation_reasoning,
+            )
+
+            logger.info(
+                "Simulation prepared: %s entities=%d profiles=%d",
+                simulation_id, filtered.filtered_count, len(profiles),
+            )
+            return snapshot
+
+        except Exception as exc:
+            import traceback
+            logger.error("Prepare failed: %s %s", simulation_id, traceback.format_exc())
+            try:
+                store.transition(
+                    simulation_id,
+                    SimState.FAILED,
+                    reason="prepare_exception",
+                    error=str(exc),
+                )
+            except Exception:
+                pass  # already terminal
+            raise
+
+    def get_simulation(self, simulation_id: str) -> Optional[SimSnapshot]:
+        """Fetch the current snapshot (cached or from disk)."""
+        return store.get(simulation_id)
+
+    def list_simulations(
+        self,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> list[SimSnapshot]:
+        """List sims. If user_id is given, filter via SurrealDB first."""
+        results: list[SimSnapshot] = []
+        seen: set[str] = set()
+
         storage = _get_surreal_storage()
         if storage:
             try:
                 rows = storage.list_simulations(limit=200, user_id=user_id)
                 for row in rows:
                     sid = row.get("simulation_id", "")
-                    pid = row.get("project_id", "")
-                    if project_id is not None and pid != project_id:
+                    if not sid:
                         continue
-                    state = self._load_simulation_state(sid)
-                    if state:
-                        simulations.append(state)
-                        seen_ids.add(sid)
+                    if project_id and row.get("project_id") != project_id:
+                        continue
+                    snap = store.get(sid)
+                    if snap is not None:
+                        results.append(snap)
+                        seen.add(sid)
             except Exception as exc:
-                logger.warning("SurrealDB list_simulations failed, falling back to files: %s", exc)
+                logger.warning("SurrealDB list_simulations failed: %s", exc)
 
-        # File fallback: pick up any simulations not yet in SurrealDB
-        if os.path.exists(self.SIMULATION_DATA_DIR):
-            for sim_id in os.listdir(self.SIMULATION_DATA_DIR):
-                if sim_id in seen_ids:
-                    continue
-                sim_path = os.path.join(self.SIMULATION_DATA_DIR, sim_id)
-                if sim_id.startswith('.') or not os.path.isdir(sim_path):
-                    continue
-                state = self._load_simulation_state(sim_id)
-                if state:
-                    if project_id is None or state.project_id == project_id:
-                        simulations.append(state)
+        # File fallback: pick up anything not in SurrealDB (e.g. local
+        # dev without a DB, or sims created before a DB migration).
+        for snap in store.list(project_id=project_id):
+            if snap.simulation_id in seen:
+                continue
+            results.append(snap)
 
-        return simulations
-    
-    def get_profiles(self, simulation_id: str, platform: str = "reddit") -> List[Dict[str, Any]]:
-        """获取模拟的Agent Profile"""
-        state = self._load_simulation_state(simulation_id)
-        if not state:
-            raise ValueError(f"模拟不存在: {simulation_id}")
-        
+        return results
+
+    def get_profiles(
+        self, simulation_id: str, platform: str = "reddit",
+    ) -> list[dict[str, Any]]:
+        """Read persisted agent profiles for a sim."""
+        if store.get(simulation_id) is None:
+            raise ValueError(f"Simulation not found: {simulation_id}")
+
         sim_dir = self._get_simulation_dir(simulation_id)
         profile_path = os.path.join(sim_dir, f"{platform}_profiles.json")
-        
         if not os.path.exists(profile_path):
             return []
-        
-        with open(profile_path, 'r', encoding='utf-8') as f:
+        with open(profile_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    
-    def get_simulation_config(self, simulation_id: str) -> Optional[Dict[str, Any]]:
-        """获取模拟配置"""
+
+    def get_simulation_config(self, simulation_id: str) -> Optional[dict[str, Any]]:
+        """Read the LLM-generated simulation config."""
         sim_dir = self._get_simulation_dir(simulation_id)
         config_path = os.path.join(sim_dir, "simulation_config.json")
-        
         if not os.path.exists(config_path):
             return None
-        
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    
-    def get_run_instructions(self, simulation_id: str) -> Dict[str, str]:
-        """获取运行说明"""
+
+    def get_run_instructions(self, simulation_id: str) -> dict[str, str]:
+        """Emit CLI instructions for running the sim manually (debugging)."""
         sim_dir = self._get_simulation_dir(simulation_id)
         config_path = os.path.join(sim_dir, "simulation_config.json")
-        scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../scripts'))
-        
+        scripts_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
+        )
         return {
             "simulation_dir": sim_dir,
             "scripts_dir": scripts_dir,
@@ -610,11 +408,4 @@ class SimulationManager:
                 "reddit": f"python {scripts_dir}/run_reddit_simulation.py --config {config_path}",
                 "parallel": f"python {scripts_dir}/run_parallel_simulation.py --config {config_path}",
             },
-            "instructions": (
-                f"1. 激活conda环境: conda activate MiroFish\n"
-                f"2. 运行模拟 (脚本位于 {scripts_dir}):\n"
-                f"   - 单独运行Twitter: python {scripts_dir}/run_twitter_simulation.py --config {config_path}\n"
-                f"   - 单独运行Reddit: python {scripts_dir}/run_reddit_simulation.py --config {config_path}\n"
-                f"   - 并行运行双平台: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
-            )
         }

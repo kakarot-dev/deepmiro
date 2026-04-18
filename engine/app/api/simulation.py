@@ -3,19 +3,36 @@
 Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化）
 """
 
+import json
 import os
+import time
 import traceback
-from flask import request, jsonify, send_file, g
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from flask import Response, g, jsonify, request, send_file, stream_with_context
 
 from . import simulation_bp
 from ..config import Config
-from ..services.entity_reader import EntityReader
-from ..services.oasis_profile_generator import OasisProfileGenerator
-from ..services.simulation_manager import SimulationManager, SimulationStatus
-from ..services.simulation_runner import SimulationRunner, RunnerStatus
-from ..utils.logger import get_logger
-from ..utils.locale import t, get_locale, set_locale
+from ..middleware.auth import require_api_key
 from ..models.project import ProjectManager
+from ..services import actions_reader
+from ..services.entity_reader import EntityReader
+from ..services.lifecycle import (
+    EVENT_REPLAY_TRUNCATED,
+    InvalidTransition,
+    SimState,
+    bus,
+    is_terminal,
+    store,
+)
+from ..services.oasis_profile_generator import OasisProfileGenerator
+from ..services.simulation_manager import SimulationManager
+from ..services.simulation_runner import SimulationRunner
+from ..utils.locale import get_locale, set_locale, t
+from ..utils.logger import get_logger
+
+logger = get_logger('mirofish.api.simulation')
 
 logger = get_logger('mirofish.api.simulation')
 
@@ -226,9 +243,9 @@ def create_simulation():
         
         return jsonify({
             "success": True,
-            "data": state.to_dict()
+            "data": state.to_status_dict()
         })
-        
+
     except Exception as e:
         logger.error(f"创建模拟失败: {str(e)}")
         return jsonify({
@@ -484,10 +501,18 @@ def prepare_simulation():
                 defined_entity_types=entity_types_list,
                 enrich_with_edges=False  # 不获取边信息，加快速度
             )
-            # 保存实体数量到状态（供前端立即获取）
-            state.entities_count = filtered_preview.filtered_count
-            state.entity_types = list(filtered_preview.entity_types)
-            logger.info(f"预期实体数量: {filtered_preview.filtered_count}, 类型: {filtered_preview.entity_types}")
+            # Stash entity count on the snapshot so the setup UI can show it
+            # before prepare_simulation finishes. SimSnapshot doesn't carry
+            # entity_types (that was a legacy field); callers that want them
+            # can hit the graph API directly.
+            state = store.update(
+                state.simulation_id,
+                entities_count=filtered_preview.filtered_count,
+            )
+            logger.info(
+                "Expected entities: %d, types: %s",
+                filtered_preview.filtered_count, filtered_preview.entity_types,
+            )
         except Exception as e:
             logger.warning(f"同步获取实体数量失败（将在后台任务中重试）: {e}")
             # 失败不影响后续流程，后台任务会重新获取
@@ -502,9 +527,9 @@ def prepare_simulation():
             }
         )
         
-        # 更新模拟状态（包含预先获取的实体数量）
-        state.status = SimulationStatus.PREPARING
-        manager._save_simulation_state(state)
+        # Lifecycle will transition CREATED → GRAPH_BUILDING inside
+        # prepare_simulation. No explicit state write here.
+        pass
         
         # Capture locale before spawning background thread
         current_locale = get_locale()
@@ -594,23 +619,17 @@ def prepare_simulation():
                     progress_callback=progress_callback,
                     parallel_profile_count=parallel_profile_count
                 )
-                
-                # 任务完成
+
+                # Task complete
                 task_manager.complete_task(
                     task_id,
-                    result=result_state.to_simple_dict()
+                    result=result_state.to_status_dict() if result_state else None,
                 )
-                
+
             except Exception as e:
                 logger.error(f"准备模拟失败: {str(e)}")
                 task_manager.fail_task(task_id, str(e))
-                
-                # 更新模拟状态为失败
-                state = manager.get_simulation(simulation_id)
-                if state:
-                    state.status = SimulationStatus.FAILED
-                    state.error = str(e)
-                    manager._save_simulation_state(state)
+                # prepare_simulation already transitions to FAILED on exception.
         
         # 启动后台线程
         thread = threading.Thread(target=run_prepare, daemon=True)
@@ -624,8 +643,7 @@ def prepare_simulation():
                 "status": "preparing",
                 "message": t('api.prepareStarted'),
                 "already_prepared": False,
-                "expected_entities_count": state.entities_count,  # 预期的Agent总数
-                "entity_types": state.entity_types  # 实体类型列表
+                "expected_entities_count": state.entities_count,
             }
         })
         
@@ -770,10 +788,10 @@ def get_simulation(simulation_id: str):
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
         
-        result = state.to_dict()
-        
-        # 如果模拟已准备好，附加运行说明
-        if state.status == SimulationStatus.READY:
+        result = state.to_status_dict()
+
+        # If sim is READY, include run instructions for manual CLI usage.
+        if state.state == SimState.READY:
             result["run_instructions"] = manager.get_run_instructions(simulation_id)
         
         return jsonify({
@@ -806,10 +824,10 @@ def list_simulations():
         
         return jsonify({
             "success": True,
-            "data": [s.to_dict() for s in simulations],
+            "data": [s.to_status_dict() for s in simulations],
             "count": len(simulations)
         })
-        
+
     except Exception as e:
         logger.error(f"列出模拟失败: {str(e)}")
         return jsonify({
@@ -919,37 +937,28 @@ def get_simulation_history():
         manager = SimulationManager()
         simulations = manager.list_simulations(user_id=g.get('user_id'))[:limit]
 
-        # 增强模拟数据，只从 Simulation 文件读取
         enriched_simulations = []
         for sim in simulations:
-            sim_dict = sim.to_dict()
-            
-            # 获取模拟配置信息（从 simulation_config.json 读取 simulation_requirement）
+            sim_dict = sim.to_status_dict()
+
+            # Derive simulation_requirement from the stored simulation_config.json
             config = manager.get_simulation_config(sim.simulation_id)
             if config:
                 sim_dict["simulation_requirement"] = config.get("simulation_requirement", "")
                 time_config = config.get("time_config", {})
                 sim_dict["total_simulation_hours"] = time_config.get("total_simulation_hours", 0)
-                # 推荐轮数（后备值）
                 recommended_rounds = int(
-                    time_config.get("total_simulation_hours", 0) * 60 / 
+                    time_config.get("total_simulation_hours", 0) * 60 /
                     max(time_config.get("minutes_per_round", 60), 1)
                 )
             else:
                 sim_dict["simulation_requirement"] = ""
                 sim_dict["total_simulation_hours"] = 0
                 recommended_rounds = 0
-            
-            # 获取运行状态（从 run_state.json 读取用户设置的实际轮数）
-            run_state = SimulationRunner.get_run_state(sim.simulation_id)
-            if run_state:
-                sim_dict["current_round"] = run_state.current_round
-                sim_dict["runner_status"] = run_state.runner_status.value
-                # 使用用户设置的 total_rounds，若无则使用推荐轮数
-                sim_dict["total_rounds"] = run_state.total_rounds if run_state.total_rounds > 0 else recommended_rounds
-            else:
-                sim_dict["current_round"] = 0
-                sim_dict["runner_status"] = "idle"
+
+            # total_rounds falls back to the config-derived recommended count
+            # when the snapshot hasn't been populated yet (e.g. sim not started).
+            if sim.total_rounds <= 0:
                 sim_dict["total_rounds"] = recommended_rounds
             
             # 获取关联项目的文件列表（最多3个）
@@ -1541,91 +1550,95 @@ def start_simulation():
             }), 404
 
         force_restarted = False
-        
-        # 智能处理状态：如果准备工作已完成，允许重新启动
-        if state.status != SimulationStatus.READY:
-            # 检查准备工作是否已完成
+
+        # If the sim isn't already READY, check if it has been prepared.
+        # Terminal sims (COMPLETED, FAILED, etc.) in force mode → reset logs + re-ready.
+        if state.state != SimState.READY:
             is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
 
             if is_prepared:
-                # 准备工作已完成，检查是否有正在运行的进程
-                if state.status == SimulationStatus.RUNNING:
-                    # 检查模拟进程是否真的在运行
-                    run_state = SimulationRunner.get_run_state(simulation_id)
-                    if run_state and run_state.runner_status.value == "running":
-                        # 进程确实在运行
-                        if force:
-                            # 强制模式：停止运行中的模拟
-                            logger.info(f"强制模式：停止运行中的模拟 {simulation_id}")
-                            try:
-                                SimulationRunner.stop_simulation(simulation_id)
-                            except Exception as e:
-                                logger.warning(f"停止模拟时出现警告: {str(e)}")
-                        else:
-                            return jsonify({
-                                "success": False,
-                                "error": t('api.simRunningForceHint')
-                            }), 400
+                # If a subprocess is still running, either cancel it (force)
+                # or reject the start request.
+                if state.state == SimState.SIMULATING:
+                    if force:
+                        logger.info(f"Force mode: cancelling running sim {simulation_id}")
+                        try:
+                            SimulationRunner.stop_simulation(simulation_id, reason="force_restart")
+                        except Exception as e:
+                            logger.warning(f"Stop warning: {e}")
+                    else:
+                        return jsonify({
+                            "success": False,
+                            "error": t('api.simRunningForceHint')
+                        }), 400
 
-                # 如果是强制模式，清理运行日志
                 if force:
-                    logger.info(f"强制模式：清理模拟日志 {simulation_id}")
+                    logger.info(f"Force mode: cleaning run logs for {simulation_id}")
                     cleanup_result = SimulationRunner.cleanup_simulation_logs(simulation_id)
                     if not cleanup_result.get("success"):
-                        logger.warning(f"清理日志时出现警告: {cleanup_result.get('errors')}")
+                        logger.warning(f"Log cleanup warning: {cleanup_result.get('errors')}")
                     force_restarted = True
-
-                # 进程不存在或已结束，重置状态为 ready
-                logger.info(f"模拟 {simulation_id} 准备工作已完成，重置状态为 ready（原状态: {state.status.value}）")
-                state.status = SimulationStatus.READY
-                manager._save_simulation_state(state)
+                    # Re-create the snapshot since cleanup dropped the cache.
+                    store.create(
+                        simulation_id,
+                        project_id=state.project_id,
+                        graph_id=state.graph_id,
+                        enable_twitter=state.enable_twitter,
+                        enable_reddit=state.enable_reddit,
+                    )
+                    # Advance back through to READY (force restart).
+                    store.transition(simulation_id, SimState.GRAPH_BUILDING, reason="force_restart")
+                    store.transition(simulation_id, SimState.GENERATING_PROFILES, reason="force_restart")
+                    store.transition(
+                        simulation_id,
+                        SimState.READY,
+                        reason="force_restart",
+                        config_generated=True,
+                    )
+                else:
+                    return jsonify({
+                        "success": False,
+                        "error": t('api.simNotReady', status=state.state.value)
+                    }), 400
             else:
-                # 准备工作未完成
                 return jsonify({
                     "success": False,
-                    "error": t('api.simNotReady', status=state.status.value)
+                    "error": t('api.simNotReady', status=state.state.value)
                 }), 400
-        
-        # 获取图谱ID（用于图谱记忆更新）
+
+        # Resolve graph_id for graph memory updates (legacy Zep integration)
         graph_id = None
         if enable_graph_memory_update:
-            # 从模拟状态或项目中获取 graph_id
             graph_id = state.graph_id
             if not graph_id:
-                # 尝试从项目中获取
                 project = ProjectManager.get_project(state.project_id)
                 if project:
                     graph_id = project.graph_id
-            
             if not graph_id:
                 return jsonify({
                     "success": False,
                     "error": t('api.graphIdRequiredForMemory')
                 }), 400
-            
-            logger.info(f"启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
-        
-        # 启动模拟
-        run_state = SimulationRunner.start_simulation(
+            logger.info(f"Graph memory update enabled: sim={simulation_id} graph={graph_id}")
+
+        # Start the simulation (this transitions READY → SIMULATING internally).
+        SimulationRunner.start_simulation(
             simulation_id=simulation_id,
             platform=platform,
             max_rounds=max_rounds,
             enable_graph_memory_update=enable_graph_memory_update,
-            graph_id=graph_id
+            graph_id=graph_id,
         )
-        
-        # 更新模拟状态
-        state.status = SimulationStatus.RUNNING
-        manager._save_simulation_state(state)
-        
-        response_data = run_state.to_dict()
+        snap = store.get(simulation_id)
+
+        response_data = snap.to_status_dict() if snap else {"simulation_id": simulation_id}
         if max_rounds:
             response_data['max_rounds_applied'] = max_rounds
         response_data['graph_memory_update_enabled'] = enable_graph_memory_update
         response_data['force_restarted'] = force_restarted
         if enable_graph_memory_update:
             response_data['graph_id'] = graph_id
-        
+
         return jsonify({
             "success": True,
             "data": response_data
@@ -1646,227 +1659,167 @@ def start_simulation():
         }), 500
 
 
-@simulation_bp.route('/stop', methods=['POST'])
-def stop_simulation():
-    """
-    停止模拟
-    
-    请求（JSON）：
-        {
-            "simulation_id": "sim_xxxx"  // 必填，模拟ID
-        }
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "runner_status": "stopped",
-                "completed_at": "2025-12-01T12:00:00"
-            }
-        }
+@simulation_bp.route('/<simulation_id>/cancel', methods=['POST'])
+@require_api_key
+def cancel_simulation(simulation_id: str):
+    """Cancel a running simulation.
+
+    Terminates the subprocess and transitions the sim to CANCELLED.
+    Idempotent — if the sim is already terminal, returns its current state.
     """
     try:
-        data = request.get_json() or {}
-        
-        simulation_id = data.get('simulation_id')
-        if not simulation_id:
-            return jsonify({
-                "success": False,
-                "error": t('api.requireSimulationId')
-            }), 400
-        
-        run_state = SimulationRunner.stop_simulation(simulation_id)
+        snapshot = store.get(simulation_id)
+        if snapshot is None:
+            return jsonify({"success": False, "error": t('api.simulationNotFound', id=simulation_id)}), 404
 
-        # 更新模拟状态 — STOPPED (not PAUSED). Pausing implies resumable,
-        # and /stop unconditionally SIGTERMs the subprocess — there's no
-        # resume path. MCP clients reading sim.status need to see a
-        # terminal non-completed state.
-        manager = SimulationManager()
-        state = manager.get_simulation(simulation_id)
-        if state:
-            state.status = SimulationStatus.STOPPED
-            manager._save_simulation_state(state)
+        SimulationRunner.stop_simulation(simulation_id, reason="api_cancel")
+        final = store.get(simulation_id)
+        return jsonify({"success": True, "data": final.to_status_dict() if final else {"simulation_id": simulation_id}})
 
-        return jsonify({
-            "success": True,
-            "data": run_state.to_dict()
-        })
-        
     except ValueError as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 400
-        
+        return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
-        logger.error(f"停止模拟失败: {str(e)}")
+        logger.error(f"Cancel simulation failed: {e}")
         return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "success": False, "error": str(e),
+            "traceback": traceback.format_exc(),
         }), 500
 
 
-# ============== 实时状态监控接口 ==============
+# Backward-compat route for older MCP clients — forwards to /cancel.
+@simulation_bp.route('/stop', methods=['POST'])
+@require_api_key
+def stop_simulation_legacy():
+    """Legacy stop endpoint. Forwards to `/cancel` semantics."""
+    data = request.get_json() or {}
+    simulation_id = data.get('simulation_id')
+    if not simulation_id:
+        return jsonify({"success": False, "error": t('api.requireSimulationId')}), 400
 
-@simulation_bp.route('/<simulation_id>/run-status', methods=['GET'])
-def get_run_status(simulation_id: str):
-    """
-    获取模拟运行实时状态（用于前端轮询）
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "runner_status": "running",
-                "current_round": 5,
-                "total_rounds": 144,
-                "progress_percent": 3.5,
-                "simulated_hours": 2,
-                "total_simulation_hours": 72,
-                "twitter_running": true,
-                "reddit_running": true,
-                "twitter_actions_count": 150,
-                "reddit_actions_count": 200,
-                "total_actions_count": 350,
-                "started_at": "2025-12-01T10:00:00",
-                "updated_at": "2025-12-01T10:30:00"
-            }
-        }
+    try:
+        SimulationRunner.stop_simulation(simulation_id, reason="api_stop")
+        snap = store.get(simulation_id)
+        return jsonify({"success": True, "data": snap.to_status_dict() if snap else {"simulation_id": simulation_id}})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Stop failed: {e}")
+        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+# ============== Unified status + SSE events ==============
+
+@simulation_bp.route('/<simulation_id>/status', methods=['GET'])
+def get_simulation_status(simulation_id: str):
+    """Canonical snapshot of a simulation's state.
+
+    Returns all fields of SimSnapshot plus derived:
+      - phase (state.value.lower())
+      - progress_percent (0-100)
+      - recent_posts (last 8 CREATE_POST actions, for MCP narration)
+      - last_event_id (for SSE Last-Event-ID resume)
+
+    Open endpoint — no auth required. Read-only.
     """
     try:
-        run_state = SimulationRunner.get_run_state(simulation_id)
-        
-        if not run_state:
-            return jsonify({
-                "success": True,
-                "data": {
-                    "simulation_id": simulation_id,
-                    "runner_status": "idle",
-                    "current_round": 0,
-                    "total_rounds": 0,
-                    "progress_percent": 0,
-                    "twitter_actions_count": 0,
-                    "reddit_actions_count": 0,
-                    "total_actions_count": 0,
-                }
-            })
-        
-        return jsonify({
-            "success": True,
-            "data": run_state.to_dict()
-        })
-        
+        snapshot = store.get(simulation_id)
+        if snapshot is None:
+            return jsonify({"success": False, "error": t('api.simulationNotFound', id=simulation_id)}), 404
+
+        data = snapshot.to_status_dict()
+        data["recent_posts"] = actions_reader.get_recent_posts(simulation_id, limit=8)
+        data["last_event_id"] = bus.current_seq(simulation_id)
+        return jsonify({"success": True, "data": data})
+
     except Exception as e:
-        logger.error(f"获取运行状态失败: {str(e)}")
+        logger.error(f"get_simulation_status failed: {e}")
         return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "success": False, "error": str(e),
+            "traceback": traceback.format_exc(),
         }), 500
 
 
-@simulation_bp.route('/<simulation_id>/run-status/detail', methods=['GET'])
-def get_run_status_detail(simulation_id: str):
+@simulation_bp.route('/<simulation_id>/events', methods=['GET'])
+@require_api_key
+def stream_simulation_events(simulation_id: str):
+    """Server-Sent Events stream of lifecycle events for a simulation.
+
+    Accepts Last-Event-ID header OR `?since=N` query param to resume.
+    Emits `HEARTBEAT` comments every 20s to keep proxies from idle-killing
+    the connection. Closes when the sim reaches a terminal state.
+
+    Auth: X-API-Key header OR `?api_key=` query param (EventSource can't
+    send custom headers, so query param is supported for /events only).
     """
-    获取模拟运行详细状态（包含所有动作）
-    
-    用于前端展示实时动态
-    
-    Query参数：
-        platform: 过滤平台（twitter/reddit，可选）
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "runner_status": "running",
-                "current_round": 5,
-                ...
-                "all_actions": [
-                    {
-                        "round_num": 5,
-                        "timestamp": "2025-12-01T10:30:00",
-                        "platform": "twitter",
-                        "agent_id": 3,
-                        "agent_name": "Agent Name",
-                        "action_type": "CREATE_POST",
-                        "action_args": {"content": "..."},
-                        "result": null,
-                        "success": true
-                    },
-                    ...
-                ],
-                "twitter_actions": [...],  # Twitter 平台的所有动作
-                "reddit_actions": [...]    # Reddit 平台的所有动作
-            }
+    snapshot = store.get(simulation_id)
+    if snapshot is None:
+        return jsonify({"success": False, "error": t('api.simulationNotFound', id=simulation_id)}), 404
+
+    # Parse Last-Event-ID from header or ?since=
+    last_id_header = request.headers.get('Last-Event-ID')
+    since_arg = request.args.get('since')
+    last_event_id: Optional[int] = None
+    if last_id_header:
+        try:
+            last_event_id = int(last_id_header)
+        except ValueError:
+            last_event_id = None
+    elif since_arg:
+        try:
+            last_event_id = int(since_arg)
+        except ValueError:
+            last_event_id = None
+
+    def _sse_format(event) -> str:
+        """Render a lifecycle.Event as an SSE frame."""
+        payload = {
+            "seq": event.seq,
+            "sim_id": event.sim_id,
+            "ts": event.ts,
+            "type": event.type,
+            "payload": event.payload,
         }
-    """
-    try:
-        run_state = SimulationRunner.get_run_state(simulation_id)
-        platform_filter = request.args.get('platform')
-        
-        if not run_state:
-            return jsonify({
-                "success": True,
-                "data": {
-                    "simulation_id": simulation_id,
-                    "runner_status": "idle",
-                    "all_actions": [],
-                    "twitter_actions": [],
-                    "reddit_actions": []
-                }
-            })
-        
-        # 获取完整的动作列表
-        all_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform=platform_filter
-        )
-        
-        # 分平台获取动作
-        twitter_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="twitter"
-        ) if not platform_filter or platform_filter == "twitter" else []
-        
-        reddit_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="reddit"
-        ) if not platform_filter or platform_filter == "reddit" else []
-        
-        # 获取当前轮次的动作（recent_actions 只展示最新一轮）
-        current_round = run_state.current_round
-        recent_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform=platform_filter,
-            round_num=current_round
-        ) if current_round > 0 else []
-        
-        # 获取基础状态信息
-        result = run_state.to_dict()
-        result["all_actions"] = [a.to_dict() for a in all_actions]
-        result["twitter_actions"] = [a.to_dict() for a in twitter_actions]
-        result["reddit_actions"] = [a.to_dict() for a in reddit_actions]
-        result["rounds_count"] = len(run_state.rounds)
-        # recent_actions 只展示当前最新一轮两个平台的内容
-        result["recent_actions"] = [a.to_dict() for a in recent_actions]
-        
-        return jsonify({
-            "success": True,
-            "data": result
-        })
-        
-    except Exception as e:
-        logger.error(f"获取详细状态失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+        return f"id: {event.seq}\nevent: {event.type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def _generate():
+        # Initial snapshot push so clients don't need to fetch /status separately.
+        snap_now = store.get(simulation_id)
+        if snap_now is not None:
+            initial_payload = snap_now.to_status_dict()
+            initial_payload["last_event_id"] = bus.current_seq(simulation_id)
+            yield (
+                f"event: snapshot\n"
+                f"data: {json.dumps(initial_payload, ensure_ascii=False)}\n\n"
+            )
+
+        # Subscribe to the bus. The generator blocks until a new event
+        # arrives OR the subscription timeout fires (handled in bus.subscribe).
+        last_heartbeat = time.time()
+        try:
+            for event in bus.subscribe(simulation_id, last_event_id=last_event_id):
+                yield _sse_format(event)
+                last_heartbeat = time.time()
+                # Terminal STATE_CHANGED? Close the stream.
+                if event.type == "STATE_CHANGED":
+                    new_state = event.payload.get("to", "")
+                    if new_state in ("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"):
+                        # One final heartbeat comment so clients know we closed cleanly.
+                        yield ": sim_terminal\n\n"
+                        return
+                # Heartbeat comments for very long-running sims
+                if time.time() - last_heartbeat > 20:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = time.time()
+        except GeneratorExit:
+            # Client disconnected — clean exit.
+            return
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return Response(stream_with_context(_generate()), mimetype="text/event-stream", headers=headers)
 
 
 @simulation_bp.route('/<simulation_id>/actions', methods=['GET'])
@@ -1899,18 +1852,18 @@ def get_simulation_actions(simulation_id: str):
         action_type = request.args.get('action_type')
         round_num = request.args.get('round_num', type=int)
 
-        actions = SimulationRunner.get_actions(
+        actions = actions_reader.get_actions(
             simulation_id=simulation_id,
             limit=limit,
             offset=offset,
             platform=platform,
             agent_id=agent_id,
-            round_num=round_num
+            round_num=round_num,
         )
 
-        # Apply agent_name and action_type filters client-side (SimulationRunner
-        # doesn't support them, but these are common queries from the MCP tool)
-        result = [a.to_dict() for a in actions]
+        # Apply agent_name and action_type filters client-side (reader
+        # supports positional filters only; these are common MCP queries).
+        result = list(actions)
         if agent_name:
             q = agent_name.lower()
             result = [a for a in result if q in a.get("agent_name", "").lower()]
@@ -1951,10 +1904,10 @@ def get_simulation_timeline(simulation_id: str):
         start_round = request.args.get('start_round', 0, type=int)
         end_round = request.args.get('end_round', type=int)
         
-        timeline = SimulationRunner.get_timeline(
+        timeline = actions_reader.get_timeline(
             simulation_id=simulation_id,
             start_round=start_round,
-            end_round=end_round
+            end_round=end_round,
         )
         
         return jsonify({
@@ -1982,7 +1935,7 @@ def get_agent_stats(simulation_id: str):
     用于前端展示Agent活跃度排行、动作分布等
     """
     try:
-        stats = SimulationRunner.get_agent_stats(simulation_id)
+        stats = actions_reader.get_agent_stats(simulation_id)
         
         return jsonify({
             "success": True,
@@ -2651,71 +2604,7 @@ def get_env_status():
         }), 500
 
 
-@simulation_bp.route('/close-env', methods=['POST'])
-def close_simulation_env():
-    """
-    关闭模拟环境
-    
-    向模拟发送关闭环境命令，使其优雅退出等待命令模式。
-    
-    注意：这不同于 /stop 接口，/stop 会强制终止进程，
-    而此接口会让模拟优雅地关闭环境并退出。
-    
-    请求（JSON）：
-        {
-            "simulation_id": "sim_xxxx",  // 必填，模拟ID
-            "timeout": 30                  // 可选，超时时间（秒），默认30
-        }
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "message": "环境关闭命令已发送",
-                "result": {...},
-                "timestamp": "2025-12-08T10:00:01"
-            }
-        }
-    """
-    try:
-        data = request.get_json() or {}
-        
-        simulation_id = data.get('simulation_id')
-        timeout = data.get('timeout', 30)
-        
-        if not simulation_id:
-            return jsonify({
-                "success": False,
-                "error": t('api.requireSimulationId')
-            }), 400
-        
-        result = SimulationRunner.close_simulation_env(
-            simulation_id=simulation_id,
-            timeout=timeout
-        )
-        
-        # 更新模拟状态
-        manager = SimulationManager()
-        state = manager.get_simulation(simulation_id)
-        if state:
-            state.status = SimulationStatus.COMPLETED
-            manager._save_simulation_state(state)
-        
-        return jsonify({
-            "success": result.get("success", False),
-            "data": result
-        })
-        
-    except ValueError as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 400
-        
-    except Exception as e:
-        logger.error(f"关闭环境失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+# /close-env removed — lifecycle transitions handle cleanup.
+# Use /cancel to terminate a running simulation. COMPLETED is reached
+# automatically via the lifecycle state machine when the subprocess
+# emits the simulation_end event or exits cleanly.
