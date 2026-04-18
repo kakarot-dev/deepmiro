@@ -114,10 +114,12 @@ def create_app(config_class=Config):
     )
     web_dist = os.environ.get("WEB_DIST", _default_web_dist)
 
-    if os.path.isdir(web_dist):
-        app = Flask(__name__, static_folder=web_dist, static_url_path="")
-    else:
-        app = Flask(__name__)
+    # Don't use Flask's built-in static handler: with static_url_path="" it
+    # registers `/<path:filename>` which returns 404 for missing files
+    # *before* our SPA catch-all can fall back to index.html. The `spa()`
+    # route below serves real files and falls back to index.html for
+    # vue-router history-mode paths.
+    app = Flask(__name__)
 
     app.config.from_object(config_class)
 
