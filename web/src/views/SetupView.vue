@@ -1,30 +1,37 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed } from "vue";
 import { useRouter } from "vue-router";
 import { createSim, uploadDoc } from "@/api/simulation";
 import { hasApiKey, setApiKey } from "@/api/client";
+import { useAuth } from "@/composables/useAuth";
 
 const router = useRouter();
+const { mode, checking, check, signInUrl, userEmail, userName } = useAuth();
 
 const prompt = ref("");
 const preset = ref<"quick" | "standard" | "deep">("standard");
 const platform = ref<"twitter" | "reddit" | "both">("both");
 const apiKey = ref("");
-const apiKeyNeeded = ref(false);
+const showKeyOption = ref(false);
 const submitting = ref(false);
 const error = ref<string | null>(null);
 const uploadedDocId = ref<string | null>(null);
 const uploadedFileName = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+const authenticated = computed(
+  () => mode.value === "session" || mode.value === "api_key",
+);
+
 onMounted(() => {
-  apiKeyNeeded.value = !hasApiKey();
+  // useAuth() already runs check() on mount
 });
 
-function saveApiKey() {
+async function saveApiKey() {
   if (apiKey.value.trim()) {
     setApiKey(apiKey.value.trim());
-    apiKeyNeeded.value = false;
+    await check();
+    showKeyOption.value = false;
   }
 }
 
@@ -56,8 +63,8 @@ async function submit() {
     error.value = "Prompt must be at least 20 characters";
     return;
   }
-  if (!hasApiKey()) {
-    apiKeyNeeded.value = true;
+  if (!authenticated.value) {
+    showKeyOption.value = true;
     return;
   }
   error.value = null;
@@ -74,7 +81,7 @@ async function submit() {
     const msg = err?.response?.data?.error ?? err?.message ?? "Failed to start simulation";
     error.value = msg;
     if (err?.response?.status === 401) {
-      apiKeyNeeded.value = true;
+      showKeyOption.value = true;
     }
   } finally {
     submitting.value = false;
@@ -94,23 +101,43 @@ function useExample(text: string) {
 
 <template>
   <div class="setup-view">
-    <div v-if="apiKeyNeeded" class="api-key-prompt">
-      <div class="prompt-card">
-        <h2>Paste your DeepMiro API key</h2>
-        <p>
-          Sign up at <a href="https://deepmiro.org" target="_blank">deepmiro.org</a>
-          → Dashboard → API Keys. Your key looks like <code>dm_xxxxxxxxx</code>.
+    <div v-if="checking" class="setup-checking">
+      <div class="loading-spinner" />
+    </div>
+
+    <div v-else-if="!authenticated" class="auth-gate">
+      <div class="auth-card">
+        <h2>Sign in to run predictions</h2>
+        <p class="auth-lede">
+          DeepMiro needs to know who you are so we can scope simulations,
+          bill usage correctly, and let you interview your agents later.
         </p>
-        <input
-          v-model="apiKey"
-          type="password"
-          placeholder="dm_..."
-          autocomplete="off"
-          @keyup.enter="saveApiKey"
-        />
-        <button class="primary" :disabled="!apiKey.trim()" @click="saveApiKey">
-          Save and continue
+        <a :href="signInUrl('https://app.deepmiro.org/')" class="primary lg">
+          Sign in with DeepMiro
+        </a>
+        <button
+          class="link"
+          type="button"
+          @click="showKeyOption = !showKeyOption"
+        >
+          Or paste an API key instead
         </button>
+        <div v-if="showKeyOption" class="api-key-block">
+          <input
+            v-model="apiKey"
+            type="password"
+            placeholder="dm_..."
+            autocomplete="off"
+            @keyup.enter="saveApiKey"
+          />
+          <button
+            class="primary"
+            :disabled="!apiKey.trim()"
+            @click="saveApiKey"
+          >
+            Save key
+          </button>
+        </div>
       </div>
     </div>
 
@@ -210,11 +237,101 @@ function useExample(text: string) {
   padding: var(--gap-xl) var(--gap-lg);
 }
 
-.api-key-prompt {
+.setup-checking {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100%;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: var(--radius-full);
+  animation: spin 1s linear infinite;
+}
+
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--gap-xl);
+}
+
+.auth-card {
+  max-width: 440px;
+  padding: var(--gap-xl);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  box-shadow: var(--shadow-md);
+}
+
+.auth-card h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: var(--gap-sm);
+  color: var(--fg-strong);
+  letter-spacing: -0.01em;
+}
+
+.auth-lede {
+  font-size: 14px;
+  color: var(--fg-muted);
+  margin-bottom: var(--gap-lg);
+  line-height: 1.6;
+}
+
+.auth-card .primary.lg {
+  display: inline-block;
+  width: 100%;
+  margin-bottom: var(--gap-md);
+  text-decoration: none;
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 6px;
+}
+
+.link:hover {
+  color: var(--fg);
+}
+
+.api-key-block {
+  display: flex;
+  gap: var(--gap-sm);
+  margin-top: var(--gap-md);
+}
+
+.api-key-block input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.api-key-block input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-muted);
+}
+
+.api-key-block .primary {
+  padding: 10px 20px;
 }
 
 .prompt-card {

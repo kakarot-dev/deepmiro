@@ -28,17 +28,31 @@ def _expected_key() -> str | None:
 
 
 def require_api_key(view_func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator: require a valid X-API-Key header (or ?api_key=) on the route.
+    """Decorator: require proof of authentication on the route.
 
-    Apply to mutating routes (POST/PUT/DELETE) and to `/events` (the SSE
-    stream). Read-only routes (`/status`, `/history`) are open.
+    Accepts either:
+      * ``X-API-Key`` header (or ``?api_key=`` query param) matching
+        ``DEEPMIRO_API_KEY`` — used by MCP clients and self-hosted dev.
+      * ``X-User-Id`` header — injected by the trusted hosted layer
+        (deepmiro-hosted service) after validating the user's session
+        cookie. Its presence means auth already happened upstream.
+
+    If ``DEEPMIRO_API_KEY`` env var is empty, middleware is a no-op
+    (self-hosted dev mode). Apply to mutating routes and the SSE
+    ``/events`` endpoint. Read-only routes stay open.
     """
 
     @wraps(view_func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         expected = _expected_key()
         if expected is None:
-            # No key configured → auth disabled (self-hosted dev mode).
+            return view_func(*args, **kwargs)
+
+        # Trusted upstream: hosted layer has already validated the user's
+        # session cookie. The X-User-Id header can only be set by that
+        # layer (traefik strips client-supplied X-User-Id headers — if
+        # you're running this pattern elsewhere, verify that's the case).
+        if request.headers.get("X-User-Id", "").strip():
             return view_func(*args, **kwargs)
 
         provided = (
@@ -49,12 +63,12 @@ def require_api_key(view_func: Callable[..., Any]) -> Callable[..., Any]:
         if not provided:
             return jsonify({
                 "success": False,
-                "error": "Authentication required: X-API-Key header missing",
+                "error": "Authentication required",
             }), 401
         if provided != expected:
             return jsonify({
                 "success": False,
-                "error": "Authentication failed: invalid API key",
+                "error": "Invalid API key",
             }), 403
 
         return view_func(*args, **kwargs)

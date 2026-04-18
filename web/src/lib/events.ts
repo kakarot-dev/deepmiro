@@ -50,7 +50,10 @@ export class SimulationEventStream {
     const qs = params.toString();
     const url = `${BASE_URL}/api/simulation/${this.simulationId}/events${qs ? "?" + qs : ""}`;
 
-    this.es = new EventSource(url);
+    // withCredentials: true ensures Better Auth session cookies are sent
+    // cross-subdomain (e.g. deepmiro.org ↔ app.deepmiro.org). The backend
+    // and hosted layer are configured with SameSite=None + Secure.
+    this.es = new EventSource(url, { withCredentials: true });
 
     this.es.addEventListener("open", () => {
       this.handlers.onOpen?.();

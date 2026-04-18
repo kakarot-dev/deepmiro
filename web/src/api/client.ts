@@ -39,6 +39,12 @@ const baseURL =
 export const http: AxiosInstance = axios.create({
   baseURL,
   timeout: 60_000,
+  // Send Better Auth session cookie on every request — required so the
+  // hosted layer (deepmiro-hosted) can resolve the user and inject
+  // X-User-Id for the backend. Works on same-origin (deepmiro.org) and
+  // cross-subdomain (app.deepmiro.org ↔ deepmiro.org) thanks to
+  // Better Auth's SameSite=None + Domain=.deepmiro.org config.
+  withCredentials: true,
 });
 
 // Inject X-API-Key on every request

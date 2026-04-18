@@ -1,22 +1,22 @@
 <script setup lang="ts">
 import { useRoute } from "vue-router";
 import { computed } from "vue";
+import { useAuth } from "@/composables/useAuth";
 
 const route = useRoute();
 const activeRoute = computed(() => route.name);
+
+const { mode, userName, userEmail, signInUrl } = useAuth();
+
+const isAuthenticated = computed(
+  () => mode.value === "session" || mode.value === "api_key",
+);
 </script>
 
 <template>
   <header class="app-header">
     <router-link to="/" class="brand">
-      <svg class="brand-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
-        <circle cx="16" cy="16" r="14" fill="none" stroke="var(--primary)" stroke-width="2.5" />
-        <circle cx="16" cy="16" r="6" fill="var(--primary)" opacity="0.8" />
-        <circle cx="16" cy="8"  r="2.5" fill="var(--primary-hover)" />
-        <circle cx="24" cy="20" r="2.5" fill="var(--primary-hover)" />
-        <circle cx="8"  cy="20" r="2.5" fill="var(--primary-hover)" />
-      </svg>
-      <span class="brand-text">DeepMiro</span>
+      <img src="/logo.png" alt="DeepMiro" class="brand-logo" />
     </router-link>
 
     <nav class="app-nav">
@@ -28,6 +28,7 @@ const activeRoute = computed(() => route.name);
         New prediction
       </router-link>
       <router-link
+        v-if="isAuthenticated"
         to="/history"
         class="nav-link"
         :class="{ active: activeRoute === 'history' }"
@@ -35,6 +36,20 @@ const activeRoute = computed(() => route.name);
         History
       </router-link>
     </nav>
+
+    <div class="app-account">
+      <div v-if="mode === 'session'" class="account-chip">
+        <span class="account-dot" />
+        {{ userName || userEmail || "Signed in" }}
+      </div>
+      <a
+        v-else-if="mode === 'unauthenticated'"
+        :href="signInUrl()"
+        class="sign-in"
+      >
+        Sign in
+      </a>
+    </div>
   </header>
 </template>
 
@@ -64,12 +79,10 @@ const activeRoute = computed(() => route.name);
   color: var(--fg-strong);
 }
 
-.brand-mark {
-  flex-shrink: 0;
-}
-
-.brand-text {
-  font-size: 16px;
+.brand-logo {
+  height: 28px;
+  width: auto;
+  display: block;
 }
 
 .app-nav {
@@ -97,5 +110,50 @@ const activeRoute = computed(() => route.name);
 .nav-link.active {
   color: var(--primary);
   background: var(--primary-muted);
+}
+
+.app-account {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-left: var(--gap-md);
+}
+
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  color: var(--fg-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--success);
+}
+
+.sign-in {
+  padding: 6px 14px;
+  background: var(--primary);
+  color: var(--bg);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background var(--duration-fast) var(--ease-out);
+}
+
+.sign-in:hover {
+  background: var(--primary-hover);
+  color: var(--bg);
 }
 </style>
