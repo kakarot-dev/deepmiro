@@ -1,7 +1,7 @@
 {
   "name": "deepmiro",
   "description": "DeepMiro swarm prediction engine. Run multi-agent social media simulations to predict how communities react to events, policies, and announcements.",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "author": {
     "name": "kakarot-dev",
     "url": "https://deepmiro.org"

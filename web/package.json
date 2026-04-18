@@ -1,6 +1,6 @@
 {
   "name": "deepmiro-web",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "description": "DeepMiro realtime simulation viewer — Vue 3 + Vite + d3",

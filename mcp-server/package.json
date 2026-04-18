@@ -1,6 +1,6 @@
 {
   "name": "deepmiro-mcp",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "description": "MCP server for DeepMiro — simulate hundreds of AI agents to predict outcomes from any document",
   "license": "AGPL-3.0-only",
   "type": "module",
