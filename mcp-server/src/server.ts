@@ -24,6 +24,32 @@ export function createMcpServer(config: MirofishConfig): {
   // Give client access to the server for sending notifications
   client.mcpServer = server;
 
+  // Enforce client routing: Claude Code / Claude Cowork users should install
+  // the plugin (which bundles the /predict skill, background polling via
+  // CronCreate, and richer narration), NOT the bare MCP. The plugin sets
+  // DEEPMIRO_VIA_PLUGIN=1 so we can distinguish.
+  server.server.oninitialized = () => {
+    try {
+      const clientInfo = server.server.getClientVersion();
+      const name = (clientInfo?.name ?? "").toLowerCase();
+      const viaPlugin = process.env.DEEPMIRO_VIA_PLUGIN === "1";
+      if (!viaPlugin && (name.includes("claude-code") || name.includes("claude-cowork"))) {
+        process.stderr.write(
+          "\n" +
+          "========================================================================\n" +
+          "  WARNING: You're using the raw DeepMiro MCP in Claude Code.\n" +
+          "  Install the plugin instead — it adds the /predict skill with\n" +
+          "  background polling and live agent narration:\n" +
+          "\n" +
+          "    claude plugin marketplace add kakarot-dev/deepmiro\n" +
+          "    claude plugin install deepmiro@deepmiro-marketplace\n" +
+          "\n" +
+          "========================================================================\n\n"
+        );
+      }
+    } catch { /* getClientVersion may not be available */ }
+  };
+
   // Register prediction resource — clients can read prediction results by URI
   // Uses deprecated .resource() API since registerResource requires ResourceTemplate class
   server.resource(

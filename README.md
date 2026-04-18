@@ -23,6 +23,22 @@ Feed it a document. Describe a scenario. Watch hundreds of AI agents with distin
 
 ---
 
+## Contents
+
+- [What It Does](#what-it-does)
+- [How It Works](#how-it-works)
+- [Quick Start](#quick-start) — get an API key, install in 2 min
+- [Self-Host (Docker / Railway)](#rehearse-the-future-in-60-seconds)
+- [MCP Server](#mcp-server) — tools available
+- [What's Different](#whats-different) — vs the original MiroFish
+- [Persona Fidelity](#persona-fidelity-how-deepmiro-keeps-agents-in-character) — the drift problem and how we fix it
+- [Monorepo Structure](#monorepo-structure)
+- [Use Cases](#use-cases)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
+
+---
+
 ## What It Does
 
 DeepMiro extracts entities and relationships from any document — a policy draft, a market report, a chapter of a novel — and constructs a parallel digital world. Inside it, hundreds of autonomous agents form opinions, argue on simulated social platforms, shift allegiances, and produce emergent behavior that no single prompt could predict.
