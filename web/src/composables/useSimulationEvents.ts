@@ -110,11 +110,19 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
         getProfiles(simId, "twitter").catch(() => [] as AgentProfile[]),
         getPosts(simId, 500).catch(() => ({ posts: [], total: 0 })),
       ]);
+      // Coerce user_id to a number — twitter profiles come from a CSV
+      // (everything is a string) while reddit profiles are JSON ints.
+      // Without coercion the Map sees "0" and 0 as distinct keys and
+      // we end up rendering two nodes for every agent (one of which
+      // has no edges since buildArchetypeEdges keys on numeric ids).
       const merged = new Map<number, AgentProfile>();
       for (const p of [...reddit, ...twitter]) {
-        const id = p.user_id ?? p.agent_id ?? -1;
-        if (id < 0) continue;
-        if (!merged.has(id)) merged.set(id, p);
+        const raw = p.user_id ?? p.agent_id;
+        const id = raw == null ? NaN : Number(raw);
+        if (!Number.isFinite(id) || id < 0) continue;
+        if (!merged.has(id)) {
+          merged.set(id, { ...p, user_id: id });
+        }
       }
       const fetchedProfiles = [...merged.values()];
       profiles.value = fetchedProfiles;
@@ -127,7 +135,7 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
         postCountByUser[uid] = (postCountByUser[uid] ?? 0) + 1;
         if (!lastPostByUser[uid]) lastPostByUser[uid] = (p as any).content ?? "";
       }
-      const nodes: GraphNode[] = fetchedProfiles.map((p, idx) => {
+      const personaNodes: GraphNode[] = fetchedProfiles.map((p, idx) => {
         const id = p.user_id ?? p.agent_id ?? idx;
         const name =
           p.realname || p.name || p.username || p.user_name || `Agent ${id}`;
@@ -140,8 +148,34 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
           lastPost: lastPostByUser[id] ?? "",
         };
       });
-      agents.value = nodes;
-      edges.value = buildArchetypeEdges(nodes);
+
+      // If the snapshot exposes a graph_id, fetch the entity knowledge
+      // graph extracted from the prompt and use that as the source of
+      // truth for the Graph view. Real entities + real relationships
+      // are far more interesting than the synthetic archetype-cluster
+      // edges. Fall back to the persona-only graph when the entity
+      // graph isn't available.
+      const graphId = snapshot.value?.graph_id;
+      let fused: { nodes: GraphNode[]; edges: GraphEdge[] } | null = null;
+      if (graphId) {
+        try {
+          const { getEntityGraph } = await import("@/api/graph");
+          const eg = await getEntityGraph(graphId);
+          if (eg && eg.nodes.length > 0) {
+            fused = fuseEntityWithPersonas(eg, personaNodes);
+          }
+        } catch (err) {
+          console.warn("Entity graph fetch failed:", err);
+        }
+      }
+
+      if (fused) {
+        agents.value = fused.nodes;
+        edges.value = fused.edges;
+      } else {
+        agents.value = personaNodes;
+        edges.value = buildArchetypeEdges(personaNodes);
+      }
     } catch (err) {
       console.warn("Failed to hydrate agents:", err);
     }
@@ -153,7 +187,21 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     actions.value = [action, ...actions.value].slice(0, ACTION_FEED_CAP);
     // Update agent post count if this is a content action
     if (["CREATE_POST", "CREATE_COMMENT", "QUOTE_POST"].includes(action.action_type)) {
-      const node = agents.value.find((n) => n.id === action.agent_id);
+      // Resolve the graph node: id-match works for the persona-only
+      // graph; the entity graph uses hashed name ids so we need to
+      // look up the persona's name from `profiles` and match on that.
+      let node = agents.value.find((n) => n.id === action.agent_id);
+      let nodeId = action.agent_id;
+      if (!node) {
+        const persona = profiles.value.find(
+          (p) => (p.user_id ?? p.agent_id) === action.agent_id,
+        );
+        const nm = (persona?.realname || persona?.name || persona?.username || action.agent_name || "").trim().toLowerCase();
+        if (nm) {
+          node = agents.value.find((n) => n.name.trim().toLowerCase() === nm);
+          if (node) nodeId = node.id;
+        }
+      }
       if (node) {
         node.post_count += 1;
         const content = (action.action_args as any)?.content;
@@ -161,9 +209,10 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
           node.lastPost = content;
         }
       }
-      // Mark active for graph glow pulse
+      // Mark active for graph glow pulse — keyed by the graph node id
+      // (hashed name in entity-graph mode, user_id otherwise).
       const m = new Map(recentlyActive.value);
-      m.set(action.agent_id, Date.now());
+      m.set(nodeId, Date.now());
       recentlyActive.value = m;
     }
     // Advance counters live
@@ -322,6 +371,78 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     isConnected,
     lastHeartbeat,
   };
+}
+
+/**
+ * Stable numeric id derived from a normalized name. Used to align
+ * entity nodes with persona nodes — when an entity name matches a
+ * persona name (case-insensitive, whitespace-normalized) they collapse
+ * to the same graph node.
+ *
+ * Range: positive 32-bit ints with the high bit set (>= 2^30) so it
+ * cannot collide with native persona user_ids (0..50 range).
+ */
+function nameToStableId(name: string): number {
+  const norm = name.trim().toLowerCase().replace(/\s+/g, " ");
+  let h = 5381;
+  for (let i = 0; i < norm.length; i++) {
+    h = ((h << 5) + h + norm.charCodeAt(i)) | 0;
+  }
+  return (Math.abs(h) | 0x40000000) >>> 0;
+}
+
+function fuseEntityWithPersonas(
+  eg: { nodes: { uuid: string; name: string; labels?: string[]; summary?: string }[]; edges: { source_node_uuid: string; target_node_uuid: string; name?: string; fact?: string; source_node_name?: string; target_node_name?: string }[] },
+  personas: GraphNode[],
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  // Build a name→persona index for fast lookup
+  const personaByName = new Map<string, GraphNode>();
+  for (const p of personas) {
+    personaByName.set(p.name.trim().toLowerCase(), p);
+  }
+
+  // Map each entity to a GraphNode, copying persona enrichment when
+  // the names match. Track uuid → numeric id for edge resolution.
+  const idByUuid = new Map<string, number>();
+  const seen = new Set<number>();
+  const nodes: GraphNode[] = [];
+  for (const ent of eg.nodes) {
+    const id = nameToStableId(ent.name);
+    idByUuid.set(ent.uuid, id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const matchedPersona = personaByName.get(ent.name.trim().toLowerCase());
+    const archetype =
+      matchedPersona?.archetype || ent.labels?.find((l) => l !== "Entity") || "Entity";
+    nodes.push({
+      id,
+      name: ent.name,
+      archetype,
+      post_count: matchedPersona?.post_count ?? 0,
+      lastPost: matchedPersona?.lastPost ?? "",
+    });
+  }
+
+  // Personas without a matching entity still render — important for
+  // the case where the LLM created an extra persona that wasn't in
+  // the prompt's entity graph.
+  for (const p of personas) {
+    if (!seen.has(p.id) && !nodes.some((n) => n.name.toLowerCase() === p.name.toLowerCase())) {
+      nodes.push(p);
+      seen.add(p.id);
+    }
+  }
+
+  // Real semantic edges from the knowledge graph
+  const edges: GraphEdge[] = [];
+  for (const ed of eg.edges) {
+    const s = idByUuid.get(ed.source_node_uuid);
+    const t = idByUuid.get(ed.target_node_uuid);
+    if (s == null || t == null || s === t) continue;
+    const label = ed.name?.trim() || ed.fact?.trim() || "related";
+    edges.push({ source: s, target: t, type: "fact", label });
+  }
+  return { nodes, edges };
 }
 
 function buildArchetypeEdges(nodes: GraphNode[]): GraphEdge[] {

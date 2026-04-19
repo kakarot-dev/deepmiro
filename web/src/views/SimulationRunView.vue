@@ -123,23 +123,40 @@ const isTerminal = computed(() =>
 const sheetOpen = ref(false);
 const sheetAgent = ref<GraphNode | null>(null);
 const sheetProfile = ref<AgentProfile | null>(null);
+function profileNameOf(p: AgentProfile): string {
+  return (p.realname || p.name || p.username || p.user_name || "").trim().toLowerCase();
+}
 function openSheetForAgent(agent: GraphNode | null) {
   if (!agent) { sheetOpen.value = false; return; }
   sheetAgent.value = agent;
-  sheetProfile.value =
-    profiles.value.find((p) => (p.user_id ?? p.agent_id) === agent.id) ?? null;
+  // Match by id first (persona-only graph), then by name (entity graph
+  // where ids are hashed from the entity name).
+  const idMatch = profiles.value.find(
+    (p) => (p.user_id ?? p.agent_id) === agent.id,
+  );
+  const nameMatch = profiles.value.find(
+    (p) => profileNameOf(p) === agent.name.trim().toLowerCase(),
+  );
+  sheetProfile.value = idMatch ?? nameMatch ?? null;
   sheetOpen.value = true;
 }
 function openSheetForProfile(profile: AgentProfile) {
   sheetProfile.value = profile;
   const id = profile.user_id ?? profile.agent_id ?? -1;
-  sheetAgent.value = agents.value.find((a) => a.id === id) ?? null;
+  const name = profileNameOf(profile);
+  sheetAgent.value =
+    agents.value.find((a) => a.id === id)
+    ?? agents.value.find((a) => a.name.trim().toLowerCase() === name)
+    ?? null;
   sheetOpen.value = true;
 }
 const sheetActions = computed(() => {
-  const id = sheetAgent.value?.id ?? sheetProfile.value?.user_id ?? sheetProfile.value?.agent_id;
-  if (id == null) return [];
-  return actions.value.filter((a) => a.agent_id === id);
+  // Actions are keyed by the persona's real user_id, never the hashed
+  // entity-graph id. Resolve through the matched profile.
+  const profileId =
+    sheetProfile.value?.user_id ?? sheetProfile.value?.agent_id;
+  if (profileId == null) return [];
+  return actions.value.filter((a) => a.agent_id === profileId);
 });
 const terminalLabel = computed(() => {
   switch (state.value) {
