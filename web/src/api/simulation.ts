@@ -112,12 +112,25 @@ export async function uploadDoc(file: File): Promise<{ document_id: string; file
   return data.data;
 }
 
-/** Agent profiles (for the graph visualization). */
-export async function getProfiles(simId: string): Promise<AgentProfile[]> {
-  const { data } = await http.get<Envelope<AgentProfile[]>>(
-    `/api/simulation/${simId}/profiles`,
-  );
-  return data.data ?? [];
+/** Agent profiles (for the graph visualization).
+ *
+ * Uses /profiles/realtime which reads files directly off disk — works
+ * mid-generation (the regular /profiles endpoint goes through
+ * SimulationManager which may 404 until the sim is READY). The
+ * envelope is `{platform, count, profiles}`, so we unwrap `.profiles`.
+ *
+ * Defaults to reddit. For twitter-only or "both" sims, callers may
+ * want to fetch both platforms — keep it simple for now and rely on
+ * reddit being present in every sim.
+ */
+export async function getProfiles(
+  simId: string,
+  platform: "reddit" | "twitter" = "reddit",
+): Promise<AgentProfile[]> {
+  const { data } = await http.get<
+    Envelope<{ platform: string; count: number; profiles: AgentProfile[] }>
+  >(`/api/simulation/${simId}/profiles/realtime`, { params: { platform } });
+  return data.data?.profiles ?? [];
 }
 
 /** Posts for a simulation (actual content). */

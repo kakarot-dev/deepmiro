@@ -41,6 +41,24 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
   const lastHeartbeat = ref<number>(0);
 
   let stream: SimulationEventStream | null = null;
+  let profilePollTimer: ReturnType<typeof setInterval> | null = null;
+
+  function stopProfilePoll() {
+    if (profilePollTimer) {
+      clearInterval(profilePollTimer);
+      profilePollTimer = null;
+    }
+  }
+
+  function startProfilePoll(simId: string) {
+    // Personas are written to disk one-at-a-time during
+    // GENERATING_PROFILES. Poll the realtime endpoint every 3s so the
+    // graph fills in as personas appear.
+    stopProfilePoll();
+    profilePollTimer = setInterval(() => {
+      hydrateAgents(simId);
+    }, 3000);
+  }
 
   function resetAll() {
     snapshot.value = null;
@@ -142,10 +160,18 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     const newState = evt.payload?.to as SimState | undefined;
     if (newState) {
       state.value = newState;
-      // When we hit SIMULATING, hydrate the agent list (profiles are
-      // written during GENERATING_PROFILES).
-      if (newState === "SIMULATING" && agents.value.length === 0) {
+      if (newState === "GENERATING_PROFILES") {
         hydrateAgents(simIdRef.value);
+        startProfilePoll(simIdRef.value);
+      } else if (newState === "READY" || newState === "SIMULATING") {
+        // Final hydrate, then stop polling — SSE actions will keep the
+        // post counts up to date.
+        hydrateAgents(simIdRef.value);
+        stopProfilePoll();
+      } else if (
+        ["COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"].includes(newState)
+      ) {
+        stopProfilePoll();
       }
     }
   }
@@ -168,12 +194,21 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
       onConnectionError: () => { isConnected.value = false; },
       onSnapshot: (snap) => {
         applySnapshot(snap);
-        // If we already have SIMULATING state and no agents, hydrate
-        if (
-          (snap.state === "SIMULATING" || snap.state === "COMPLETED") &&
-          agents.value.length === 0
-        ) {
+        // Hydrate as soon as we know personas exist or are being written.
+        // Includes GENERATING_PROFILES (in-progress writes), READY,
+        // SIMULATING, and COMPLETED. For GENERATING_PROFILES we also
+        // start a 3s poll so newly-written personas show up.
+        const phasesNeedingHydrate: SimState[] = [
+          "GENERATING_PROFILES",
+          "READY",
+          "SIMULATING",
+          "COMPLETED",
+        ];
+        if (phasesNeedingHydrate.includes(snap.state)) {
           hydrateAgents(simId);
+          if (snap.state === "GENERATING_PROFILES") {
+            startProfilePoll(simId);
+          }
         }
       },
       onAction: handleAction,
@@ -200,8 +235,17 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     try {
       const snap = await getStatus(simId);
       applySnapshot(snap);
-      if (snap.state === "SIMULATING" || snap.state === "COMPLETED") {
+      const hydratablePhases: SimState[] = [
+        "GENERATING_PROFILES",
+        "READY",
+        "SIMULATING",
+        "COMPLETED",
+      ];
+      if (hydratablePhases.includes(snap.state)) {
         await hydrateAgents(simId);
+        if (snap.state === "GENERATING_PROFILES") {
+          startProfilePoll(simId);
+        }
       }
       openStream(simId);
     } catch (err: any) {
@@ -216,6 +260,7 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
   }, { immediate: true });
 
   onBeforeUnmount(() => {
+    stopProfilePoll();
     stream?.close();
     stream = null;
   });
