@@ -19,8 +19,12 @@ const archetype = computed(() => resolveArchetype(props.profile.entity_type || p
 const bio = computed(() => props.profile.bio || props.profile.persona || "");
 </script>
 
+<script lang="ts">
+export default { inheritAttrs: false };
+</script>
+
 <template>
-  <Card hoverable>
+  <Card hoverable v-bind="$attrs" class="persona-card-clickable">
     <div class="head">
       <Avatar :name="name" :color="archetype.color" :size="40" />
       <div class="ident">
@@ -66,4 +70,5 @@ const bio = computed(() => props.profile.bio || props.profile.persona || "");
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.persona-card-clickable { cursor: pointer; }
 </style>

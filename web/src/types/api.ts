@@ -177,4 +177,6 @@ export interface GraphEdge {
   source: number | GraphNode;
   target: number | GraphNode;
   type?: string;
+  /** Human-readable label shown on the graph and in the tooltip. */
+  label?: string;
 }

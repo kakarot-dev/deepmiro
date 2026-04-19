@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, watch } from "vue";
-import { XCircle, AlertTriangle, RefreshCw } from "lucide-vue-next";
+import { XCircle, AlertTriangle, RefreshCw, FileText } from "lucide-vue-next";
 import StepNav, { type StepKey } from "@/components/StepNav.vue";
 import GraphView from "@/components/phases/GraphView.vue";
 import PersonasView from "@/components/phases/PersonasView.vue";
 import SimulatingView from "@/components/phases/SimulatingView.vue";
 import InlineReportView from "@/components/phases/InlineReportView.vue";
+import PersonaSheet from "@/components/PersonaSheet.vue";
 import Button from "@/components/ui/Button.vue";
 import { useSimulationEvents } from "@/composables/useSimulationEvents";
 import { cancelSim } from "@/api/simulation";
 import { useActiveSimStore } from "@/stores/activeSim";
+import type { AgentProfile, GraphNode } from "@/types/api";
 
 interface Props {
   simId: string;
@@ -115,6 +117,30 @@ async function handleCancel() {
 const isTerminal = computed(() =>
   ["FAILED", "CANCELLED", "INTERRUPTED"].includes(state.value),
 );
+
+// Persona detail sheet wiring — graph-node click + persona-card click
+// both open the same Sheet on the right with full profile detail.
+const sheetOpen = ref(false);
+const sheetAgent = ref<GraphNode | null>(null);
+const sheetProfile = ref<AgentProfile | null>(null);
+function openSheetForAgent(agent: GraphNode | null) {
+  if (!agent) { sheetOpen.value = false; return; }
+  sheetAgent.value = agent;
+  sheetProfile.value =
+    profiles.value.find((p) => (p.user_id ?? p.agent_id) === agent.id) ?? null;
+  sheetOpen.value = true;
+}
+function openSheetForProfile(profile: AgentProfile) {
+  sheetProfile.value = profile;
+  const id = profile.user_id ?? profile.agent_id ?? -1;
+  sheetAgent.value = agents.value.find((a) => a.id === id) ?? null;
+  sheetOpen.value = true;
+}
+const sheetActions = computed(() => {
+  const id = sheetAgent.value?.id ?? sheetProfile.value?.user_id ?? sheetProfile.value?.agent_id;
+  if (id == null) return [];
+  return actions.value.filter((a) => a.agent_id === id);
+});
 const terminalLabel = computed(() => {
   switch (state.value) {
     case "FAILED": return "Simulation failed";
@@ -159,12 +185,14 @@ const terminalLabel = computed(() => {
         :edges="edges"
         :snapshot="snapshot"
         :recently-active="recentlyActive"
+        @select="openSheetForAgent"
       />
       <PersonasView
         v-else-if="activeStep === 'personas'"
         :profiles="profiles"
         :expected-count="snapshot?.entities_count ?? 0"
         :generating="state === 'GENERATING_PROFILES'"
+        @select="openSheetForProfile"
       />
       <SimulatingView
         v-else-if="activeStep === 'activity'"
@@ -187,6 +215,14 @@ const terminalLabel = computed(() => {
         {{ cancelling ? "Cancelling…" : "Cancel" }}
       </Button>
     </div>
+
+    <PersonaSheet
+      :open="sheetOpen"
+      :agent="sheetAgent"
+      :profile="sheetProfile"
+      :recent-actions="sheetActions"
+      @update:open="(v) => (sheetOpen = v)"
+    />
 
     <div v-if="error && !isTerminal && state !== 'COMPLETED'" class="error-toast">
       <span>{{ error }}</span>

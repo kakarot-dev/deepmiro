@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Loader2, FileText, AlertTriangle } from "lucide-vue-next";
+import { Loader2, FileText, AlertTriangle, Sparkles, RotateCw } from "lucide-vue-next";
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import Button from "@/components/ui/Button.vue";
 import { getReport } from "@/api/simulation";
 import type { ReportDocument } from "@/types/api";
 
@@ -15,6 +16,7 @@ const props = defineProps<Props>();
 
 const report = ref<ReportDocument | null>(null);
 const loading = ref(false);
+const generating = ref(false);
 const err = ref<string | null>(null);
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -38,6 +40,19 @@ async function fetchReport() {
   }
 }
 
+async function regenerateReport() {
+  generating.value = true;
+  err.value = null;
+  try {
+    const r = await getReport(props.simId, true);
+    report.value = r;
+  } catch (e: any) {
+    err.value = e?.message ?? "Generation failed";
+  } finally {
+    generating.value = false;
+  }
+}
+
 onMounted(fetchReport);
 watch(() => [props.simId, props.isCompleted], fetchReport);
 </script>
@@ -55,8 +70,22 @@ watch(() => [props.simId, props.isCompleted], fetchReport);
     <div v-else-if="err" class="state error">
       <AlertTriangle :size="24" />
       <span>{{ err }}</span>
+      <Button variant="primary" size="sm" :disabled="generating" @click="regenerateReport">
+        <RotateCw v-if="!generating" :size="14" />
+        <Loader2 v-else :size="14" class="spin" />
+        Try again
+      </Button>
     </div>
-    <article v-else-if="report" class="report" v-html="renderedHtml" />
+    <article v-else-if="report" class="report-wrap">
+      <div class="report-toolbar">
+        <Button variant="ghost" size="sm" :disabled="generating" @click="regenerateReport">
+          <Sparkles v-if="!generating" :size="14" />
+          <Loader2 v-else :size="14" class="spin" />
+          {{ generating ? "Regenerating…" : "Regenerate report" }}
+        </Button>
+      </div>
+      <div class="report" v-html="renderedHtml" />
+    </article>
   </div>
 </template>
 
@@ -79,10 +108,17 @@ watch(() => [props.simId, props.isCompleted], fetchReport);
 .state.empty p { max-width: 360px; text-align: center; line-height: 1.5; }
 .state.error { color: var(--danger); }
 .spin { animation: spin 1.2s linear infinite; }
-.report {
+.report-wrap {
   max-width: 880px;
   margin: 0 auto;
-  padding: var(--gap-xl) var(--gap-lg);
+}
+.report-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--gap-md) var(--gap-lg) 0;
+}
+.report {
+  padding: var(--gap-md) var(--gap-lg) var(--gap-xl);
   color: var(--fg);
   font-size: 15px;
   line-height: 1.7;

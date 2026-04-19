@@ -325,28 +325,41 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
 }
 
 function buildArchetypeEdges(nodes: GraphNode[]): GraphEdge[] {
-  // Group nodes by archetype. Within a group, add a chain of edges
-  // so the force simulation clusters them visually. Between groups,
-  // add a single anchor edge so the graph stays connected.
+  // Group nodes by archetype. Within a group, chain them so the force
+  // simulation clusters them visually. Across groups, drop a single
+  // anchor edge so the whole graph stays connected.
+  //
+  // Every edge gets a human-readable label so the user can mouse over
+  // a connection and see what it represents instead of an unlabeled
+  // line. "cluster" edges share an archetype; "bridge" edges link
+  // different archetype groups.
   const byArchetype: Record<string, GraphNode[]> = {};
   for (const node of nodes) {
     const arch = resolveArchetype(node.archetype).label;
     (byArchetype[arch] = byArchetype[arch] ?? []).push(node);
   }
   const edges: GraphEdge[] = [];
-  const groupAnchors: GraphNode[] = [];
-  for (const group of Object.values(byArchetype)) {
+  const groupAnchors: { node: GraphNode; archetype: string }[] = [];
+  for (const [archetype, group] of Object.entries(byArchetype)) {
     for (let i = 0; i < group.length - 1; i++) {
-      edges.push({ source: group[i].id, target: group[i + 1].id, type: "cluster" });
+      edges.push({
+        source: group[i].id,
+        target: group[i + 1].id,
+        type: "cluster",
+        label: `Both: ${archetype}`,
+      });
     }
-    if (group.length > 0) groupAnchors.push(group[0]);
+    if (group.length > 0) groupAnchors.push({ node: group[0], archetype });
   }
   // Inter-cluster anchors
   for (let i = 0; i < groupAnchors.length - 1; i++) {
+    const a = groupAnchors[i];
+    const b = groupAnchors[i + 1];
     edges.push({
-      source: groupAnchors[i].id,
-      target: groupAnchors[i + 1].id,
+      source: a.node.id,
+      target: b.node.id,
       type: "bridge",
+      label: `${a.archetype} ↔ ${b.archetype}`,
     });
   }
   return edges;

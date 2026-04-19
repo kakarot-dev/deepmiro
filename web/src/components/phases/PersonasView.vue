@@ -10,6 +10,7 @@ interface Props {
   generating?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), { generating: false });
+const emit = defineEmits<{ select: [profile: AgentProfile] }>();
 
 // Newest first while generating, alphabetical when complete
 const ordered = computed(() => {
@@ -38,6 +39,7 @@ const ordered = computed(() => {
             v-for="profile in ordered"
             :key="profile.user_id ?? profile.username ?? profile.name"
             :profile="profile"
+            @click="emit('select', profile)"
           />
         </TransitionGroup>
       </div>

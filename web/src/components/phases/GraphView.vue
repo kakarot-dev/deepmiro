@@ -12,6 +12,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   recentlyActive: () => new Map<number, number>(),
 });
+const emit = defineEmits<{ select: [agent: GraphNode | null] }>();
 
 const isEmpty = () => props.agents.length === 0;
 </script>
@@ -21,7 +22,12 @@ const isEmpty = () => props.agents.length === 0;
        show the actual force graph full-screen. -->
   <GraphBuildingView v-if="isEmpty()" :snapshot="snapshot" />
   <div v-else class="graph-wrap">
-    <GraphPanel :agents="agents" :edges="edges" :recently-active="recentlyActive" />
+    <GraphPanel
+      :agents="agents"
+      :edges="edges"
+      :recently-active="recentlyActive"
+      @select="(a) => emit('select', a)"
+    />
   </div>
 </template>
 

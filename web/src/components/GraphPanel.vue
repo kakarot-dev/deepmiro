@@ -33,6 +33,7 @@ import "d3-transition";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { GraphEdge, GraphNode } from "@/types/api";
 import { resolveArchetype } from "@/lib/archetypes";
+import { truncate } from "@/lib/format";
 
 interface Props {
   agents: GraphNode[];
@@ -58,14 +59,60 @@ interface D3Link extends SimulationLinkDatum<D3Node> {
   source: D3Node | number;
   target: D3Node | number;
   type?: string;
+  label?: string;
 }
 
 const container = ref<HTMLDivElement | null>(null);
 const svgRef = ref<SVGSVGElement | null>(null);
 const labelsRef = ref<HTMLDivElement | null>(null);
+const tooltipRef = ref<HTMLDivElement | null>(null);
 const selectedId = ref<number | null>(null);
 const hoveredId = ref<number | null>(null);
+const hoveredEdge = ref<D3Link | null>(null);
 const transform = ref<ZoomTransform>(zoomIdentity);
+
+// Tooltip state — shown on hover, follows cursor
+const tooltipState = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  kind: "node" | "edge" | null;
+  node?: D3Node;
+  edge?: D3Link;
+}>({ visible: false, x: 0, y: 0, kind: null });
+
+function showNodeTooltip(event: MouseEvent, n: D3Node) {
+  const rect = container.value?.getBoundingClientRect();
+  if (!rect) return;
+  tooltipState.value = {
+    visible: true,
+    x: event.clientX - rect.left + 14,
+    y: event.clientY - rect.top + 14,
+    kind: "node",
+    node: n,
+  };
+}
+function showEdgeTooltip(event: MouseEvent, e: D3Link) {
+  const rect = container.value?.getBoundingClientRect();
+  if (!rect) return;
+  tooltipState.value = {
+    visible: true,
+    x: event.clientX - rect.left + 14,
+    y: event.clientY - rect.top + 14,
+    kind: "edge",
+    edge: e,
+  };
+}
+function moveTooltip(event: MouseEvent) {
+  if (!tooltipState.value.visible) return;
+  const rect = container.value?.getBoundingClientRect();
+  if (!rect) return;
+  tooltipState.value.x = event.clientX - rect.left + 14;
+  tooltipState.value.y = event.clientY - rect.top + 14;
+}
+function hideTooltip() {
+  tooltipState.value = { visible: false, x: 0, y: 0, kind: null };
+}
 
 let simulation: Simulation<D3Node, D3Link> | null = null;
 let nodesData: D3Node[] = [];
@@ -113,6 +160,43 @@ const visibleLabels = computed<D3Node[]>(() => {
   }
   return [...out.values()];
 });
+
+const visibleEdges = computed<D3Link[]>(() => {
+  // Show edge labels for: hovered edge, and any edge incident to the
+  // hovered or selected node.
+  const out: D3Link[] = [];
+  if (hoveredEdge.value) out.push(hoveredEdge.value);
+  const incidentTo = (id: number) => {
+    for (const e of linksData) {
+      const s = (e.source as D3Node).id ?? (e.source as number);
+      const t = (e.target as D3Node).id ?? (e.target as number);
+      if (s === id || t === id) {
+        if (!out.includes(e)) out.push(e);
+      }
+    }
+  };
+  if (selectedId.value !== null) incidentTo(selectedId.value);
+  if (hoveredId.value !== null) incidentTo(hoveredId.value);
+  return out;
+});
+
+function originalEdgeIdx(e: D3Link): number {
+  return linksData.indexOf(e);
+}
+function archetypeLabel(n: D3Node): string {
+  return resolveArchetype(n.archetype).label;
+}
+function edgeSourceName(e: D3Link): string {
+  const s = e.source as D3Node;
+  return typeof s === "object" ? s.name : nodeMap.get(s as number)?.name ?? String(s);
+}
+function edgeTargetName(e: D3Link): string {
+  const t = e.target as D3Node;
+  return typeof t === "object" ? t.name : nodeMap.get(t as number)?.name ?? String(t);
+}
+function edgeFallbackLabel(e: D3Link): string {
+  return e.type === "bridge" ? "cross-cluster link" : "shared cluster";
+}
 
 const dimmedIds = computed<Set<number>>(() => {
   if (selectedId.value === null) return new Set();
@@ -234,20 +318,43 @@ function renderJoin() {
     .attr("class", "stop-target")
     .attr("offset", "100%");
 
-  // ---- Links ----
-  const linkSel = root
-    .select<SVGGElement>(".links")
+  // ---- Links: visible stroked path + a fat invisible hit-target so
+  //      hover works without forcing the user to land on the 1.4px line.
+  const linkGroup = root.select<SVGGElement>(".links");
+  const linkSel = linkGroup
     .selectAll<SVGPathElement, D3Link>("path.link")
     .data(linksData, (d) => `l-${(d.source as D3Node).id ?? d.source}-${(d.target as D3Node).id ?? d.target}`);
   linkSel.exit().remove();
-  linkSel
+  const linkEnter = linkSel
     .enter()
+    .append("g")
+    .attr("class", "link-group");
+  linkEnter
+    .append("path")
+    .attr("class", "link-hit")
+    .attr("fill", "none")
+    .attr("stroke", "transparent")
+    .attr("stroke-width", 14)
+    .style("cursor", "default");
+  linkEnter
     .append("path")
     .attr("class", "link")
     .attr("fill", "none")
     .attr("stroke-width", 1.4)
     .attr("stroke-linecap", "round")
     .attr("stroke", (d) => `url(#grad-${(d.source as D3Node).id ?? d.source}-${(d.target as D3Node).id ?? d.target})`);
+  // Hover handlers on the parent group so both visible + hit paths fire
+  linkGroup
+    .selectAll<SVGGElement, D3Link>("g.link-group")
+    .on("mouseenter", (event, d) => {
+      hoveredEdge.value = d;
+      showEdgeTooltip(event as MouseEvent, d);
+    })
+    .on("mousemove", (event) => moveTooltip(event as MouseEvent))
+    .on("mouseleave", () => {
+      hoveredEdge.value = null;
+      hideTooltip();
+    });
 
   // ---- Nodes ----
   const nodeSel = root
@@ -262,11 +369,19 @@ function renderJoin() {
     .attr("class", "node")
     .attr("opacity", 0)
     .style("cursor", "pointer")
-    .on("mouseenter", (_event, d) => { hoveredId.value = d.id; })
-    .on("mouseleave", () => { hoveredId.value = null; })
+    .on("mouseenter", (event, d) => {
+      hoveredId.value = d.id;
+      showNodeTooltip(event as MouseEvent, d);
+    })
+    .on("mousemove", (event) => moveTooltip(event as MouseEvent))
+    .on("mouseleave", () => {
+      hoveredId.value = null;
+      hideTooltip();
+    })
     .on("click", (event, d) => {
       event.stopPropagation();
       selectedId.value = selectedId.value === d.id ? null : d.id;
+      hideTooltip();
       emit("select", selectedId.value === null ? null : d);
     })
     .call(
@@ -339,18 +454,39 @@ function tick() {
     .attr("stop-color", (d) => nodeColor(d.target as D3Node))
     .attr("stop-opacity", (d) => edgeOpacity(d));
 
-  // Curved bezier paths
+  // Curved bezier paths — apply same `d` to both visible + hit paths
   root
     .select(".links")
-    .selectAll<SVGPathElement, D3Link>("path.link")
-    .attr("d", (d) => {
-      const s = d.source as D3Node;
-      const t = d.target as D3Node;
+    .selectAll<SVGPathElement, D3Link>("path.link, path.link-hit")
+    .attr("d", function (d) {
+      const datum = d as D3Link;
+      const s = datum.source as D3Node;
+      const t = datum.target as D3Node;
       const sx = s.x ?? 0, sy = s.y ?? 0, tx = t.x ?? 0, ty = t.y ?? 0;
       const dx = tx - sx, dy = ty - sy;
       const dr = Math.sqrt(dx * dx + dy * dy) * 1.8;
       return `M${sx},${sy} A${dr},${dr} 0 0,1 ${tx},${ty}`;
     });
+  // Edge labels follow path midpoint
+  if (labelsRef.value) {
+    const t = transform.value;
+    const els = labelsRef.value.querySelectorAll<HTMLDivElement>(".edge-label");
+    els.forEach((el) => {
+      const idx = Number(el.dataset.idx);
+      const ed = linksData[idx];
+      if (!ed) { el.style.display = "none"; return; }
+      const s = ed.source as D3Node;
+      const tg = ed.target as D3Node;
+      if (s.x == null || s.y == null || tg.x == null || tg.y == null) {
+        el.style.display = "none";
+        return;
+      }
+      const mx = (s.x + tg.x) / 2;
+      const my = (s.y + tg.y) / 2;
+      el.style.transform = `translate(${t.applyX(mx)}px, ${t.applyY(my)}px) translate(-50%, -50%)`;
+      el.style.display = "block";
+    });
+  }
 
   // Nodes
   const nodeSel = root.select(".nodes").selectAll<SVGGElement, D3Node>("g.node");
@@ -470,12 +606,58 @@ watch(() => [props.agents, props.edges], () => updateGraph(), { deep: true });
     <div class="labels" ref="labelsRef">
       <div
         v-for="n in visibleLabels"
-        :key="n.id"
+        :key="`n-${n.id}`"
         class="label"
         :data-id="n.id"
       >
         {{ n.name }}
       </div>
+      <!-- Edge labels: only render when an edge is hovered or selected
+           neighborhood, so the canvas isn't cluttered. The node-label
+           sync loop covers positioning. -->
+      <div
+        v-for="(e, idx) in visibleEdges"
+        :key="`e-${idx}`"
+        class="edge-label"
+        :data-idx="originalEdgeIdx(e)"
+      >
+        {{ e.label || edgeFallbackLabel(e) }}
+      </div>
+    </div>
+    <div
+      class="tooltip"
+      ref="tooltipRef"
+      :style="{
+        left: tooltipState.x + 'px',
+        top: tooltipState.y + 'px',
+        opacity: tooltipState.visible ? 1 : 0,
+        pointerEvents: 'none',
+      }"
+    >
+      <template v-if="tooltipState.kind === 'node' && tooltipState.node">
+        <div class="tt-name">{{ tooltipState.node.name }}</div>
+        <div class="tt-meta">
+          <span :style="{ color: nodeColor(tooltipState.node) }">
+            {{ archetypeLabel(tooltipState.node) }}
+          </span>
+          <span class="tt-sep">·</span>
+          <span>{{ tooltipState.node.post_count }} {{ tooltipState.node.post_count === 1 ? "post" : "posts" }}</span>
+        </div>
+        <div v-if="tooltipState.node.lastPost" class="tt-snippet">
+          "{{ truncate(tooltipState.node.lastPost, 120) }}"
+        </div>
+        <div class="tt-hint">click for full profile</div>
+      </template>
+      <template v-else-if="tooltipState.kind === 'edge' && tooltipState.edge">
+        <div class="tt-name">
+          {{ edgeSourceName(tooltipState.edge) }}
+          <span class="tt-arrow">→</span>
+          {{ edgeTargetName(tooltipState.edge) }}
+        </div>
+        <div class="tt-edge-label">
+          {{ tooltipState.edge.label || edgeFallbackLabel(tooltipState.edge) }}
+        </div>
+      </template>
     </div>
     <div v-if="agents.length === 0" class="graph-empty">
       <div class="empty-pulse" />
@@ -547,6 +729,71 @@ export default {};
   white-space: nowrap;
   box-shadow: var(--shadow-sm);
   transition: opacity var(--duration-fast) var(--ease-out);
+}
+.edge-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  background: rgba(10, 15, 20, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+.tooltip {
+  position: absolute;
+  z-index: 20;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.tt-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-strong);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+.tt-arrow { color: var(--fg-subtle); margin: 0 4px; }
+.tt-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tt-sep { color: var(--fg-subtle); }
+.tt-snippet {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--fg);
+  line-height: 1.4;
+}
+.tt-edge-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.tt-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--fg-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .graph-empty {
   position: absolute;
