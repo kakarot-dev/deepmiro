@@ -131,11 +131,12 @@ function isActive(n: D3Node): boolean {
   return Date.now() - ts < 2500;
 }
 
-const visibleLabels = computed<D3Node[]>(() => {
-  // Show every node's label. The graph is meant to be readable at a
-  // glance — hiding labels behind hover-only created the impression
-  // that personas were "missing".
-  return [...nodesData];
+const visibleLabels = computed<GraphNode[]>(() => {
+  // Iterate `props.agents` directly — it's reactive. Earlier this
+  // used the local `nodesData` variable which is mutated outside
+  // Vue's reactivity, so the computed never recomputed and labels
+  // disappeared entirely after the first render.
+  return [...props.agents];
 });
 
 const visibleEdges = computed<D3Link[]>(() => {
