@@ -362,10 +362,16 @@ class SimulationManager:
 
         # File fallback: pick up anything not in SurrealDB (e.g. local
         # dev without a DB, or sims created before a DB migration).
-        for snap in store.list(project_id=project_id):
-            if snap.simulation_id in seen:
-                continue
-            results.append(snap)
+        #
+        # Critical: when user_id is set (hosted mode), we MUST NOT fall
+        # back to the file store — those rows have no user_id metadata,
+        # so returning them would leak other users' sims to whoever
+        # asked. Self-hosted callers (user_id=None) get everything.
+        if user_id is None:
+            for snap in store.list(project_id=project_id):
+                if snap.simulation_id in seen:
+                    continue
+                results.append(snap)
 
         return results
 

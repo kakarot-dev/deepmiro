@@ -47,3 +47,6 @@ helm-chart/secrets.yaml
 # Work in progress
 logo-*.html
 mcp-server/.mcpregistry_*
+
+# MCP registry publish secrets
+.mcpregistry_*

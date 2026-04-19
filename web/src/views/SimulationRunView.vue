@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, watch } from "vue";
-import { XCircle } from "lucide-vue-next";
-import GraphBuildingView from "@/components/phases/GraphBuildingView.vue";
-import ProfileGenerationView from "@/components/phases/ProfileGenerationView.vue";
+import { XCircle, AlertTriangle, RefreshCw } from "lucide-vue-next";
+import StepNav, { type StepKey } from "@/components/StepNav.vue";
+import GraphView from "@/components/phases/GraphView.vue";
+import PersonasView from "@/components/phases/PersonasView.vue";
 import SimulatingView from "@/components/phases/SimulatingView.vue";
-import CompletedView from "@/components/phases/CompletedView.vue";
-import TerminalView from "@/components/phases/TerminalView.vue";
+import InlineReportView from "@/components/phases/InlineReportView.vue";
 import Button from "@/components/ui/Button.vue";
 import { useSimulationEvents } from "@/composables/useSimulationEvents";
 import { cancelSim } from "@/api/simulation";
@@ -29,11 +29,49 @@ const {
   agents,
   edges,
   profiles,
+  recentlyActive,
   error,
 } = useSimulationEvents(simIdRef);
 
-// Push reactive sim state into the global active-sim store so the
-// AppHeader can render the phase chip.
+// Determine the "default" step for the current phase.
+function defaultStepFor(s: string): StepKey {
+  if (s === "CREATED" || s === "GRAPH_BUILDING") return "graph";
+  if (s === "GENERATING_PROFILES" || s === "READY") return "personas";
+  if (s === "COMPLETED") return "report";
+  return "activity";
+}
+
+const userOverrideStep = ref<StepKey | null>(null);
+const activeStep = computed<StepKey>(
+  () => userOverrideStep.value ?? defaultStepFor(state.value),
+);
+function onStepChange(key: StepKey) {
+  userOverrideStep.value = key;
+}
+// Auto-advance: when the phase changes, if the user hasn't manually
+// picked a step, follow the new default. If they did pick one, stay.
+watch(state, (s, prev) => {
+  if (s === prev) return;
+  if (userOverrideStep.value === null) return;
+  // If user override is now "behind" (e.g. they were on "graph" and we
+  // hit SIMULATING), nudge them forward — but only on phase transition
+  // forward, not on terminal states.
+  const transitions: Record<string, StepKey> = {
+    GENERATING_PROFILES: "personas",
+    SIMULATING: "activity",
+    COMPLETED: "report",
+  };
+  const next = transitions[s];
+  if (!next) return;
+  // Only auto-advance if the user is on a step that's "earlier" than the
+  // new default — leaves them alone if they're inspecting a later step.
+  const order: StepKey[] = ["graph", "personas", "activity", "report"];
+  if (order.indexOf(userOverrideStep.value!) < order.indexOf(next)) {
+    userOverrideStep.value = next;
+  }
+});
+
+// Push state into the global active-sim store for the AppHeader chip.
 const activeSim = useActiveSimStore();
 watch(
   () => ({
@@ -77,36 +115,73 @@ async function handleCancel() {
 const isTerminal = computed(() =>
   ["FAILED", "CANCELLED", "INTERRUPTED"].includes(state.value),
 );
+const terminalLabel = computed(() => {
+  switch (state.value) {
+    case "FAILED": return "Simulation failed";
+    case "CANCELLED": return "Simulation cancelled";
+    case "INTERRUPTED": return "Simulation interrupted";
+    default: return "";
+  }
+});
 </script>
 
 <template>
   <div class="run-view">
-    <component
-      :is="
-        state === 'CREATED' || state === 'GRAPH_BUILDING'
-          ? GraphBuildingView
-          : state === 'GENERATING_PROFILES' || state === 'READY'
-            ? ProfileGenerationView
-            : state === 'SIMULATING'
-              ? SimulatingView
-              : state === 'COMPLETED'
-                ? CompletedView
-                : TerminalView
-      "
-      :sim-id="simId"
-      :snapshot="snapshot"
+    <StepNav
+      :active="activeStep"
       :state="state"
-      :error="error"
-      :actions="actions"
-      :agents="agents"
-      :edges="edges"
-      :profiles="profiles"
-      :twitter-count="twitterActions"
-      :reddit-count="redditActions"
-      :expected-count="snapshot?.entities_count ?? 0"
+      :agents-count="agents.length"
+      :actions-count="actions.length"
+      @change="onStepChange"
     />
 
-    <div v-if="state === 'SIMULATING'" class="floating-actions">
+    <div v-if="isTerminal" class="terminal-banner">
+      <div class="banner-left">
+        <AlertTriangle :size="18" />
+        <div class="banner-text">
+          <strong>{{ terminalLabel }}</strong>
+          <span v-if="error">{{ error }}</span>
+          <span v-else>Partial results below — start a fresh run to continue.</span>
+        </div>
+      </div>
+      <router-link to="/">
+        <Button variant="primary" size="sm">
+          <RefreshCw :size="13" />
+          New prediction
+        </Button>
+      </router-link>
+    </div>
+
+    <div class="step-content">
+      <GraphView
+        v-if="activeStep === 'graph'"
+        :agents="agents"
+        :edges="edges"
+        :snapshot="snapshot"
+        :recently-active="recentlyActive"
+      />
+      <PersonasView
+        v-else-if="activeStep === 'personas'"
+        :profiles="profiles"
+        :expected-count="snapshot?.entities_count ?? 0"
+        :generating="state === 'GENERATING_PROFILES'"
+      />
+      <SimulatingView
+        v-else-if="activeStep === 'activity'"
+        :actions="actions"
+        :agents="agents"
+        :edges="edges"
+        :twitter-count="twitterActions"
+        :reddit-count="redditActions"
+      />
+      <InlineReportView
+        v-else-if="activeStep === 'report'"
+        :sim-id="simId"
+        :is-completed="state === 'COMPLETED'"
+      />
+    </div>
+
+    <div v-if="state === 'SIMULATING' && activeStep === 'activity'" class="floating-actions">
       <Button variant="danger" size="sm" :disabled="cancelling" @click="handleCancel">
         <XCircle :size="14" />
         {{ cancelling ? "Cancelling…" : "Cancel" }}
@@ -122,17 +197,59 @@ const isTerminal = computed(() =>
 <style scoped>
 .run-view {
   position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
+.step-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.terminal-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: 10px var(--gap-lg);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--warning) 14%, transparent), transparent 60%),
+    var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  color: var(--warning);
+  flex-shrink: 0;
+}
+.banner-left {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  min-width: 0;
+}
+.banner-text {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--fg);
+  min-width: 0;
+}
+.banner-text strong { color: var(--fg-strong); font-weight: 600; }
+.banner-text span {
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60vw;
+}
 .floating-actions {
   position: absolute;
-  top: var(--gap-md);
+  top: 50px;
   right: var(--gap-lg);
   z-index: 8;
-  display: flex;
-  gap: var(--gap-sm);
 }
 .error-toast {
   position: absolute;
