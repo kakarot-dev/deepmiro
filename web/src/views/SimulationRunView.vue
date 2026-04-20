@@ -36,6 +36,7 @@ const {
   edges,
   profiles,
   scenario,
+  postsById,
   recentlyActive,
   recentlyActiveEdges,
   error,
@@ -233,6 +234,7 @@ const terminalLabel = computed(() => {
         :snapshot="snapshot"
         :recently-active="recentlyActive"
         :recently-active-edges="recentlyActiveEdges"
+        :posts-by-id="postsById"
         @select="openSheetForAgent"
         @select-edge="openConnectionSheet"
       />
@@ -246,6 +248,7 @@ const terminalLabel = computed(() => {
         :generating="state === 'GENERATING_PROFILES'"
         :recently-active="recentlyActive"
         :recently-active-edges="recentlyActiveEdges"
+        :posts-by-id="postsById"
         @select-persona="openSheetForProfile"
         @select-agent="openSheetForAgent"
         @select-edge="openConnectionSheet"
@@ -260,6 +263,7 @@ const terminalLabel = computed(() => {
         :reddit-count="redditActions"
         :recently-active="recentlyActive"
         :recently-active-edges="recentlyActiveEdges"
+        :posts-by-id="postsById"
         @select-action="openActionSheet"
         @select-agent="openSheetForAgent"
         @select-edge="openConnectionSheet"
@@ -275,6 +279,7 @@ const terminalLabel = computed(() => {
         :reddit-count="redditActions"
         :recently-active="recentlyActive"
         :recently-active-edges="recentlyActiveEdges"
+        :posts-by-id="postsById"
         @select-action="openActionSheet"
         @select-agent="openSheetForAgent"
         @select-edge="openConnectionSheet"
@@ -291,6 +296,7 @@ const terminalLabel = computed(() => {
         :reddit-count="redditActions"
         :recently-active="recentlyActive"
         :recently-active-edges="recentlyActiveEdges"
+        :posts-by-id="postsById"
         @select-action="openActionSheet"
         @select-agent="openSheetForAgent"
         @select-edge="openConnectionSheet"
@@ -305,6 +311,7 @@ const terminalLabel = computed(() => {
         :reddit-count="redditActions"
         :recently-active="recentlyActive"
         :recently-active-edges="recentlyActiveEdges"
+        :posts-by-id="postsById"
         @select-action="openActionSheet"
         @select-agent="openSheetForAgent"
         @select-edge="openConnectionSheet"

@@ -45,6 +45,9 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
   const profiles = ref<AgentProfile[]>([]);
   const scenario = ref<ScenarioContext | null>(null);
   const interactions = ref<InteractionEdge[]>([]);
+  // post_id → { content, user_id, platform } so action cards can
+  // resolve "X liked post 42" → render the actual quoted post
+  const postsById = ref<Map<number, { content: string; user_id: number; platform?: string }>>(new Map());
   // Tracks node IDs that recently posted (for graph glow pulse)
   const recentlyActive = ref<Map<number, number>>(new Map());
   // Tracks edge keys ("src-tgt") recently used by an action so the
@@ -88,6 +91,7 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     profiles.value = [];
     scenario.value = null;
     interactions.value = [];
+    postsById.value = new Map();
     recentlyActive.value = new Map();
     recentlyActiveEdges.value = new Map();
     error.value = null;
@@ -187,12 +191,22 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
 
       const postCountByUser: Record<number, number> = {};
       const lastPostByUser: Record<number, string> = {};
+      const newPostsById = new Map<number, { content: string; user_id: number; platform?: string }>();
       for (const p of postResp.posts ?? []) {
         const uid = (p as any).user_id;
+        const pid = (p as any).post_id;
+        if (typeof pid === "number") {
+          newPostsById.set(pid, {
+            content: (p as any).content ?? "",
+            user_id: typeof uid === "number" ? uid : -1,
+            platform: (p as any).platform,
+          });
+        }
         if (typeof uid !== "number") continue;
         postCountByUser[uid] = (postCountByUser[uid] ?? 0) + 1;
         if (!lastPostByUser[uid]) lastPostByUser[uid] = (p as any).content ?? "";
       }
+      postsById.value = newPostsById;
       const personaNodes: GraphNode[] = fetchedProfiles.map((p, idx) => {
         const id = p.user_id ?? p.agent_id ?? idx;
         const name =
@@ -456,6 +470,7 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     profiles,
     scenario,
     interactions,
+    postsById,
     recentlyActive,
     recentlyActiveEdges,
     error,

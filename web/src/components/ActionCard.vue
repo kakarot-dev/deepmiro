@@ -10,8 +10,37 @@ import type { AgentActionRecord, GraphNode } from "@/types/api";
 interface Props {
   action: AgentActionRecord;
   agent?: GraphNode;
+  /** post_id → original post lookup, used to render the "responded
+   *  to" block on like/repost/comment/quote actions. */
+  posts?: Map<number, { content: string; user_id: number; platform?: string }>;
+  /** Lookup persona name by user_id — for the "→ Tim Cook" header on
+   *  responded-to blocks. */
+  agents?: Map<number, GraphNode>;
 }
 const props = defineProps<Props>();
+
+const targetPostId = computed<number | null>(() => {
+  const args: any = props.action.action_args ?? {};
+  const id = args.post_id ?? args.target_post_id;
+  return typeof id === "number" ? id : null;
+});
+const targetPost = computed(() => {
+  if (targetPostId.value == null || !props.posts) return null;
+  return props.posts.get(targetPostId.value) ?? null;
+});
+const targetAuthor = computed(() => {
+  if (!targetPost.value || !props.agents) return null;
+  return props.agents.get(targetPost.value.user_id) ?? null;
+});
+const targetUserId = computed<number | null>(() => {
+  const args: any = props.action.action_args ?? {};
+  const id = args.followee_id ?? args.target_user_id;
+  return typeof id === "number" ? id : null;
+});
+const targetUser = computed(() => {
+  if (targetUserId.value == null || !props.agents) return null;
+  return props.agents.get(targetUserId.value) ?? null;
+});
 
 const platform = computed(() => props.action.platform || "twitter");
 const archetype = computed(() => resolveArchetype(props.agent?.archetype ?? ""));
@@ -97,10 +126,25 @@ function timeAgo(): string {
         <span class="dot">·</span>
         <span class="round">r{{ action.round }}</span>
       </div>
+      <!-- Top-level: action verb + content (for posts/comments/quotes) -->
       <div v-if="isContentAction && content" class="content">{{ content }}</div>
-      <div v-else class="meta-action">
-        <component v-if="actionIcon" :is="actionIcon" :size="14" class="meta-icon" />
-        <span>{{ actionLabel }}</span>
+      <div v-else-if="!isContentAction" class="action-line">
+        <component v-if="actionIcon" :is="actionIcon" :size="14" class="action-icon" />
+        <span class="action-verb">{{ actionLabel }}</span>
+        <span v-if="targetUser" class="action-target">
+          → {{ targetUser.name }}
+        </span>
+      </div>
+
+      <!-- "responded to" quoted block: show the original post for
+           like / repost / comment / quote, when we can resolve it. -->
+      <div v-if="targetPost" class="quoted">
+        <div class="quoted-head">
+          <span v-if="targetAuthor" class="quoted-author">{{ targetAuthor.name }}</span>
+          <span v-else class="quoted-author dim">post #{{ targetPostId }}</span>
+          <span class="dim"> wrote:</span>
+        </div>
+        <div class="quoted-content">{{ targetPost.content }}</div>
       </div>
       <div v-if="!action.success" class="failure">
         <Badge variant="danger">failed</Badge>
@@ -168,6 +212,42 @@ function timeAgo(): string {
   font-style: italic;
 }
 .meta-icon { color: var(--fg-subtle); }
+.action-line {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.action-icon { color: var(--primary); }
+.action-verb { font-weight: 600; }
+.action-target { color: var(--fg-muted); }
+.quoted {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border-left: 2px solid var(--primary-muted);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.quoted-head {
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.quoted-author {
+  color: var(--fg-strong);
+  font-weight: 600;
+}
+.dim { color: var(--fg-subtle); }
+.quoted-content {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .failure {
   margin-top: 8px;
   display: flex;

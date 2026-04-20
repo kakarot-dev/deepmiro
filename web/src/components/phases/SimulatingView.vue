@@ -22,10 +22,12 @@ interface Props {
   redditCount: number;
   recentlyActive?: Map<number, number>;
   recentlyActiveEdges?: Map<string, number>;
+  postsById?: Map<number, { content: string; user_id: number; platform?: string }>;
 }
 const props = withDefaults(defineProps<Props>(), {
   recentlyActive: () => new Map<number, number>(),
   recentlyActiveEdges: () => new Map<string, number>(),
+  postsById: () => new Map<number, { content: string; user_id: number; platform?: string }>(),
 });
 const emit = defineEmits<{
   "select-action": [action: AgentActionRecord];
@@ -41,11 +43,19 @@ const agentMap = computed(() => {
   for (const a of props.agents) m.set(a.id, a);
   return m;
 });
+// Filter out passive actions (DO_NOTHING / IDLE) so the feed only
+// shows meaningful behavior. Round 1-3 are usually mostly idle as
+// agents read context — those would just clutter the feed.
+const SKIP_TYPES = new Set(["DO_NOTHING", "IDLE", "NOOP"]);
 const twitterActions = computed(() =>
-  props.actions.filter((a) => a.platform === "twitter").slice(0, 60),
+  props.actions
+    .filter((a) => a.platform === "twitter" && !SKIP_TYPES.has(a.action_type))
+    .slice(0, 60),
 );
 const redditActions = computed(() =>
-  props.actions.filter((a) => a.platform === "reddit").slice(0, 60),
+  props.actions
+    .filter((a) => a.platform === "reddit" && !SKIP_TYPES.has(a.action_type))
+    .slice(0, 60),
 );
 
 watch(twitterActions, async () => {
@@ -88,6 +98,8 @@ watch(redditActions, async () => {
                 :key="a.timestamp + '_' + a.agent_id + '_' + a.action_type"
                 :action="a"
                 :agent="agentMap.get(a.agent_id)"
+                :agents="agentMap"
+                :posts="postsById"
                 class="clickable"
                 @click="emit('select-action', a)"
               />
@@ -113,6 +125,8 @@ watch(redditActions, async () => {
                 :key="a.timestamp + '_' + a.agent_id + '_' + a.action_type"
                 :action="a"
                 :agent="agentMap.get(a.agent_id)"
+                :agents="agentMap"
+                :posts="postsById"
                 class="clickable"
                 @click="emit('select-action', a)"
               />
