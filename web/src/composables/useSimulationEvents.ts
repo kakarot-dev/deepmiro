@@ -549,13 +549,18 @@ function fuseEntityWithPersonas(
     const s = idByUuid.get(ed.source_node_uuid);
     const t = idByUuid.get(ed.target_node_uuid);
     if (s == null || t == null || s === t) continue;
-    const label = ed.name?.trim() || ed.fact?.trim() || "related";
+    // Drop edges with no relation name AND no fact sentence — they
+    // contain no useful info, just clutter the graph with mystery
+    // lines. The LLM sometimes emits these when extraction is noisy.
+    const name = ed.name?.trim();
+    const fact = ed.fact?.trim();
+    if (!name && !fact) continue;
     edges.push({
       source: s,
       target: t,
       type: "fact",
-      label,
-      fact: ed.fact?.trim() || undefined,
+      label: name || fact || "related",
+      fact: fact || undefined,
     });
     incident.add(s);
     incident.add(t);
