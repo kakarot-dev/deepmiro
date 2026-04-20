@@ -68,6 +68,18 @@ class OasisAgentProfile:
     never_say: List[str] = field(default_factory=list)  # 3-5 sentences agent would refuse
     speaking_style: str = ""  # 1-2 sentences on register + rhetorical habits
 
+    # ---- Structured role taxonomy (frontend uses this directly) ----
+    # `role` is one of a fixed enum so the UI doesn't have to keyword-
+    # bucket free-text professions. `stance` is how the persona feels
+    # about the scenario subject — supportive / critical / etc.
+    #
+    # role values: public_figure | organization | regulator | advocate |
+    #              journalist | investor | competitor | customer |
+    #              community | academic | partner | insider | other
+    # stance values: supportive | critical | neutral | ambivalent | unknown
+    role: str = "other"
+    stance: str = "unknown"
+
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
     
     def to_reddit_format(self) -> Dict[str, Any]:
@@ -94,6 +106,10 @@ class OasisAgentProfile:
             profile["profession"] = self.profession
         if self.interested_topics:
             profile["interested_topics"] = self.interested_topics
+        if self.role:
+            profile["role"] = self.role
+        if self.stance:
+            profile["stance"] = self.stance
 
         return profile
 
@@ -111,8 +127,10 @@ class OasisAgentProfile:
             "verbal_tics": self.verbal_tics,
             "never_say": self.never_say,
             "speaking_style": self.speaking_style,
+            "role": self.role,
+            "stance": self.stance,
         }
-    
+
     def to_twitter_format(self) -> Dict[str, Any]:
         """转换为Twitter平台格式"""
         profile = {
@@ -140,9 +158,13 @@ class OasisAgentProfile:
             profile["profession"] = self.profession
         if self.interested_topics:
             profile["interested_topics"] = self.interested_topics
-        
+        if self.role:
+            profile["role"] = self.role
+        if self.stance:
+            profile["stance"] = self.stance
+
         return profile
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to full dict format (includes structured persona fields)."""
         return {
@@ -168,6 +190,8 @@ class OasisAgentProfile:
             "verbal_tics": self.verbal_tics,
             "never_say": self.never_say,
             "speaking_style": self.speaking_style,
+            "role": self.role,
+            "stance": self.stance,
             "created_at": self.created_at,
         }
 
@@ -301,6 +325,8 @@ class OasisProfileGenerator:
             source_entity_uuid=entity.uuid,
             source_entity_type=entity_type,
             # Structured persona fields (Option D — drift resistance)
+            role=(profile_data.get("role") or "other").strip().lower(),
+            stance=(profile_data.get("stance") or "unknown").strip().lower(),
             ideology_anchor=profile_data.get("ideology_anchor", ""),
             core_beliefs=profile_data.get("core_beliefs", []) or [],
             verbal_tics=profile_data.get("verbal_tics", []) or [],
@@ -737,6 +763,26 @@ dramatic pauses and rhetorical questions. Uses 'folks' and 'permanent \
 Washington' as signature markers. Frames every story as elite overreach against \
 ordinary people."
 
+14. role: ONE lowercase token from this fixed enum describing what KIND \
+of participant this persona is in the scenario. Required.
+    public_figure  — a known individual (CEO, politician, celeb, pundit)
+    organization   — a company / brand / institution acting as itself
+    regulator      — government / oversight body (NHTSA, FCC, FTC, DOJ)
+    advocate       — activist, nonprofit, civil society (ACLU, EFF, Nader)
+    journalist     — reporter, columnist, tech creator, podcaster
+    investor       — VC, hedge fund, analyst, short-seller, asset manager
+    competitor     — same-market rival of the scenario subject
+    customer       — end-user, consumer voice, trade group, power user
+    community      — subreddit, fediverse, online community
+    academic       — researcher, scientist, professor
+    partner        — collaborator with the scenario subject
+    insider        — current or former employee
+    other          — fallback only
+
+15. stance: ONE lowercase token from this enum describing how the persona \
+feels about the scenario's central subject. Required.
+    supportive | critical | neutral | ambivalent | unknown
+
 Important:
 - All field values must be strings, numbers, or arrays of strings; do not use \
 unescaped newlines in strings
@@ -835,6 +881,16 @@ habits. Example for Heritage: "Formal think-tank voice with constitutional \
 and free-market framing. Frequently cites founders and historical precedent. \
 Avoids populist register."
 
+14. role: ONE lowercase token from this fixed enum describing what KIND \
+of participant this institution is in the scenario. Required.
+    public_figure | organization | regulator | advocate | journalist | \
+    investor | competitor | customer | community | academic | partner | \
+    insider | other
+
+15. stance: ONE lowercase token describing how this institution feels \
+about the scenario's central subject. Required.
+    supportive | critical | neutral | ambivalent | unknown
+
 Important:
 - All field values must be strings, numbers, or arrays of strings; null values \
 not allowed
@@ -849,6 +905,7 @@ not return empty arrays
 would refuse to publish
 - DO NOT soften or hedge. The institution's ideology/stance should be sharp \
 and clearly identifiable from core_beliefs alone.
+- role + stance MUST each be exactly one token from the listed enums
 """
     
     def _generate_profile_rule_based(

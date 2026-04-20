@@ -139,7 +139,8 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
   function rebuildGraph() {
     const withHub = injectScenarioHub(lastFusedNodes, lastFusedEdges, scenario.value);
     const withInteractions = layerInteractions(withHub.nodes, withHub.edges, interactions.value);
-    agents.value = withInteractions.nodes;
+    const enriched = enrichNodeMetrics(withInteractions.nodes, interactions.value, actions.value);
+    agents.value = enriched;
     edges.value = withInteractions.edges;
   }
 
@@ -216,6 +217,8 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
           id,
           name,
           archetype: entityType,
+          role: p.role,
+          stance: p.stance,
           post_count: postCountByUser[id] ?? 0,
           lastPost: lastPostByUser[id] ?? "",
         };
@@ -702,6 +705,49 @@ function layerInteractions(
     });
   }
   return { nodes, edges: [...edges, ...newEdges] };
+}
+
+/**
+ * Walks interactions + actions to compute per-node metrics used for
+ * visual encoding in the graph:
+ *   - received_likes/comments/reposts/follows: sum of inbound kinds
+ *   - failed_action_count: total failed actions by this agent
+ */
+function enrichNodeMetrics(
+  nodes: GraphNode[],
+  inters: InteractionEdge[],
+  actions: AgentActionRecord[],
+): GraphNode[] {
+  const metrics = new Map<number, { rl: number; rc: number; rr: number; rf: number; fa: number }>();
+  for (const i of inters) {
+    const key = i.target;
+    const m = metrics.get(key) ?? { rl: 0, rc: 0, rr: 0, rf: 0, fa: 0 };
+    if (i.kind === "like") m.rl += i.weight;
+    else if (i.kind === "comment") m.rc += i.weight;
+    else if (i.kind === "repost") m.rr += i.weight;
+    else if (i.kind === "follow") m.rf += i.weight;
+    metrics.set(key, m);
+  }
+  for (const a of actions) {
+    if (!a.success) {
+      const key = a.agent_id;
+      const m = metrics.get(key) ?? { rl: 0, rc: 0, rr: 0, rf: 0, fa: 0 };
+      m.fa += 1;
+      metrics.set(key, m);
+    }
+  }
+  return nodes.map((n) => {
+    const m = metrics.get(n.id);
+    if (!m) return n;
+    return {
+      ...n,
+      received_likes: m.rl,
+      received_comments: m.rc,
+      received_reposts: m.rr,
+      received_follows: m.rf,
+      failed_action_count: m.fa,
+    };
+  });
 }
 
 function buildArchetypeEdges(nodes: GraphNode[]): GraphEdge[] {

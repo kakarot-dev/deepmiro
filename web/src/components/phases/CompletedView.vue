@@ -36,19 +36,11 @@ function viewReport() {
 
 <template>
   <div class="layout">
-    <div class="banner">
-      <div class="banner-left">
-        <CheckCircle2 :size="20" />
-        <div class="banner-text">
-          <strong>Simulation complete.</strong>
-          <span>{{ agents.length }} personas · {{ totalActions }} actions · {{ snapshot?.current_round ?? 0 }} rounds</span>
-        </div>
-      </div>
-      <Button variant="primary" @click="viewReport">
-        <FileText :size="14" />
-        View report
-      </Button>
-    </div>
+    <!-- Banner gone entirely. Completion is shown by:
+         - Header chip says "Complete"
+         - Step nav has a green check on Activity + Report unlocked
+         - User can navigate to Report step for the full read.
+         "View report" CTA is folded into the step nav (Report step). -->
     <div class="feed-wrap">
       <SimulatingView
         :actions="actions"

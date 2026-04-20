@@ -152,14 +152,35 @@ export interface AgentProfile {
   age?: number;
   gender?: string;
   country?: string;
+  /** Structured role from the fixed taxonomy (public_figure,
+   *  organization, regulator, advocate, journalist, investor,
+   *  competitor, customer, community, academic, partner, insider,
+   *  other). Emitted by the persona generator. */
+  role?: string;
+  /** supportive | critical | neutral | ambivalent | unknown */
+  stance?: string;
 }
 
 /** Graph node for the force-directed viz */
 export interface GraphNode {
   id: number;
   name: string;
+  /** Free-text profession/entity_type (e.g. "Chief Executive Officer of Apple"). */
   archetype: string;
+  /** Structured role from the fixed enum — one of public_figure,
+   *  organization, regulator, advocate, journalist, investor,
+   *  competitor, customer, community, academic, partner, insider,
+   *  other, Scenario (for the hub). */
+  role?: string;
+  /** supportive | critical | neutral | ambivalent | unknown */
+  stance?: string;
   post_count: number;
+  /** Per-network metrics derived from interactions. */
+  received_likes?: number;
+  received_comments?: number;
+  received_reposts?: number;
+  received_follows?: number;
+  failed_action_count?: number;
   follower_count?: number;
   platform?: string;
   lastPost?: string;

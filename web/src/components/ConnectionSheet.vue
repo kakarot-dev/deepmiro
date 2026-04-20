@@ -74,12 +74,23 @@ const interactionActions = computed<AgentActionRecord[]>(() => {
 });
 
 /** For cluster edges, list all members of the same archetype. */
+const clusterArchetype = computed(() => {
+  if (!source.value) return "Other";
+  return resolveArchetype(source.value.archetype).label;
+});
 const clusterMembers = computed<GraphNode[]>(() => {
   if (kind.value !== "cluster" || !source.value) return [];
-  const arch = resolveArchetype(source.value.archetype).label;
+  const arch = clusterArchetype.value;
   return props.agents.filter(
     (a) => resolveArchetype(a.archetype).label === arch,
   );
+});
+const clusterReason = computed(() => {
+  const arch = clusterArchetype.value;
+  if (arch === "Other") {
+    return "These nodes were grouped here as a fallback — no specific archetype rule (CEO, journalist, regulator, etc.) matched their profession descriptions, so they share the catch-all 'Other' bucket.";
+  }
+  return `These nodes share the persona archetype "${arch}", so the layout chains them together to keep their visual cluster legible. The connection is structural, not a real semantic relation from the prompt.`;
 });
 
 const sourceColor = computed(() =>
@@ -160,13 +171,25 @@ const desc = computed(() => sectionDescriptions[kind.value]);
       <!-- FACT -->
       <div v-if="kind === 'fact'" class="section">
         <div class="section-title">Relation</div>
-        <div class="rel-pill">{{ edge.label }}</div>
+        <div class="rel-pill">{{ edge.label || "related (no relation type extracted)" }}</div>
         <div v-if="edge.fact" class="quote">{{ edge.fact }}</div>
+        <p v-else class="lead small">
+          The LLM linked these two during graph extraction but didn't
+          attach a sentence-level fact. Edge survives because both
+          endpoints exist in the knowledge graph.
+        </p>
       </div>
 
       <!-- CLUSTER -->
       <div v-else-if="kind === 'cluster'" class="section">
-        <div class="section-title">All nodes in this cluster ({{ clusterMembers.length }})</div>
+        <div class="section-title">Shared archetype</div>
+        <div class="rel-pill">{{ clusterArchetype }}</div>
+        <p class="lead small">
+          {{ clusterReason }}
+        </p>
+        <div class="section-title" style="margin-top: var(--gap-md);">
+          All {{ clusterMembers.length }} nodes in this cluster
+        </div>
         <div class="member-list">
           <div v-for="m in clusterMembers" :key="m.id" class="member">
             <Avatar :name="m.name" :color="personaColor(m.name)" :size="28" />
@@ -236,6 +259,7 @@ const desc = computed(() => sectionDescriptions[kind.value]);
   line-height: 1.6;
   color: var(--fg-muted);
 }
+.lead.small { font-size: 12px; line-height: 1.5; }
 .endpoints {
   display: flex;
   align-items: center;

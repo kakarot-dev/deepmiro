@@ -126,25 +126,33 @@ function timeAgo(): string {
         <span class="dot">·</span>
         <span class="round">r{{ action.round }}</span>
       </div>
-      <!-- Top-level: action verb + content (for posts/comments/quotes) -->
-      <div v-if="isContentAction && content" class="content">{{ content }}</div>
-      <div v-else-if="!isContentAction" class="action-line">
+      <!-- Always render an action line so cards are never empty.
+           Verb badge + optional target persona name. -->
+      <div class="action-line">
         <component v-if="actionIcon" :is="actionIcon" :size="14" class="action-icon" />
         <span class="action-verb">{{ actionLabel }}</span>
         <span v-if="targetUser" class="action-target">
-          → {{ targetUser.name }}
+          → <strong>{{ targetUser.name }}</strong>
         </span>
       </div>
 
-      <!-- "responded to" quoted block: show the original post for
-           like / repost / comment / quote, when we can resolve it. -->
-      <div v-if="targetPost" class="quoted">
+      <!-- Their own content (CREATE_POST / COMMENT / QUOTE) — plain
+           text, no border, reads as "they wrote this". -->
+      <div v-if="content" class="own-content">{{ content }}</div>
+
+      <!-- Responded-to content — clearly delimited as someone else's,
+           with a "↳ {author} wrote" header, dim background, left
+           accent. Renders even when post lookup fails so the user
+           still knows there was a target. -->
+      <div v-if="targetPostId != null" class="quoted">
         <div class="quoted-head">
+          <span class="quoted-arrow">↳</span>
           <span v-if="targetAuthor" class="quoted-author">{{ targetAuthor.name }}</span>
           <span v-else class="quoted-author dim">post #{{ targetPostId }}</span>
-          <span class="dim"> wrote:</span>
+          <span class="quoted-verb"> wrote</span>
         </div>
-        <div class="quoted-content">{{ targetPost.content }}</div>
+        <div v-if="targetPost?.content" class="quoted-content">{{ targetPost.content }}</div>
+        <div v-else class="quoted-placeholder">(content not in current view buffer)</div>
       </div>
       <div v-if="!action.success" class="failure">
         <Badge variant="danger">failed</Badge>
@@ -164,7 +172,8 @@ function timeAgo(): string {
   border-radius: var(--radius-md);
   transition: border-color var(--duration-fast) var(--ease-out);
   position: relative;
-  overflow: hidden;
+  /* No overflow:hidden — was clipping bottom of content + avatars
+     looked half-cut in narrow rails. */
 }
 .action-card::before {
   content: "";
@@ -194,7 +203,7 @@ function timeAgo(): string {
 }
 .handle, .time, .round { color: var(--fg-muted); }
 .dot { color: var(--fg-subtle); }
-.content {
+.content, .own-content {
   margin-top: 6px;
   font-size: 14px;
   line-height: 1.5;

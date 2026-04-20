@@ -131,7 +131,16 @@ function isHub(n: D3Node): boolean {
 }
 function nodeRadius(n: D3Node): number {
   if (isHub(n)) return 22; // larger central anchor
-  return Math.min(28, 10 + Math.sqrt(Math.max(0, n.post_count)) * 2.4);
+  // Weighted received attention — likes lightest, comments heavier,
+  // reposts heaviest. Falls back to post_count when interactions
+  // haven't been aggregated yet.
+  const attention =
+    (n.received_likes ?? 0) +
+    (n.received_comments ?? 0) * 2 +
+    (n.received_reposts ?? 0) * 3 +
+    (n.received_follows ?? 0) * 0.5;
+  const base = attention > 0 ? attention : Math.max(0, n.post_count);
+  return Math.min(34, 9 + Math.sqrt(base) * 2.4);
 }
 /**
  * Per-node color: shared with avatars / cards / sheets via personaColor()

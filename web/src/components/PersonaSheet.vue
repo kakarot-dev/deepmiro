@@ -17,6 +17,11 @@ interface Props {
   /** When the clicked node is the scenario hub, pass the full scenario
    *  context so the sheet renders facts + topics instead of bio. */
   scenario?: ScenarioContext | null;
+  /** post_id → original post lookup so the activity rows can render
+   *  the responded-to content for likes/comments/quotes. */
+  posts?: Map<number, { content: string; user_id: number; platform?: string }>;
+  /** user_id → persona name lookup for "↳ Tim Cook wrote" headers. */
+  agents?: Map<number, GraphNode>;
 }
 const isHub = computed(() => props.agent?.archetype === "Scenario");
 const props = defineProps<Props>();

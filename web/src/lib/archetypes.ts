@@ -1,146 +1,120 @@
 /**
- * Archetype → color + label mapping.
+ * Archetype = a persona's *type label* shown on badges/chips and used
+ * for the cluster-grouping fallback.
  *
- * Node colors in the GraphPanel are keyed by the agent's entity_type
- * from the OASIS profile. Keep this list aligned with DeepMiro's
- * common ontology outputs.
+ * Earlier this file held a keyword regex resolver that bucketed every
+ * persona's free-text `entity_type` into ~12 hand-rolled archetypes
+ * (TechCEO, Journalist, etc.). That system was brittle: any profession
+ * description that didn't match a regex fell into "Other", and once
+ * the user added "short seller" / "automaker" / "insurance company"
+ * personas the buckets stopped reflecting reality.
+ *
+ * The new approach: don't bucket at all. Each persona's archetype
+ * label is just their `entity_type` text (truncated for badges).
+ * Color is per-persona (lib/colors.ts) — every individual is distinct.
+ *
+ * Cluster edges no longer exist (they were a synthetic crutch). The
+ * graph stays connected via real fact edges, scenario hub edges, and
+ * the bridge fallback for orphaned nodes.
  */
+
+import { personaColor } from "@/lib/colors";
 
 export interface Archetype {
+  /** Short, displayable label for a Badge. */
   label: string;
+  /** Full text — what the LLM emitted, used in tooltips/sheets. */
+  full: string;
   color: string;
-  description?: string;
 }
 
-const ARCHETYPE_MAP: Record<string, Archetype> = {
-  TechCEO: { label: "Tech CEO", color: "#2dd4bf" },
-  TechExecutive: { label: "Tech Exec", color: "#2dd4bf" },
-  TechBillionaire: { label: "Tech Billionaire", color: "#2dd4bf" },
-  PlatformCompany: { label: "Platform", color: "#818cf8" },
-  PlatformCeo: { label: "Platform CEO", color: "#2dd4bf" },
-  PlatformModerator: { label: "Moderator", color: "#f472b6" },
-
-  Journalist: { label: "Journalist", color: "#fb923c" },
-  TechJournalist: { label: "Tech Journalist", color: "#fb923c" },
-  MediaPersonality: { label: "Media", color: "#fb923c" },
-  PoliticalCommentator: { label: "Commentator", color: "#fb923c" },
-
-  Politician: { label: "Politician", color: "#c084fc" },
-  GovernmentOfficial: { label: "Gov't Official", color: "#c084fc" },
-  RegulatoryBody: { label: "Regulator", color: "#c084fc" },
-
-  AdvocacyGroup: { label: "Advocacy", color: "#4ade80" },
-  DigitalRightsOrganization: { label: "Digital Rights", color: "#4ade80" },
-  CivilLibertiesGroup: { label: "Civil Rights", color: "#4ade80" },
-
-  Corporation: { label: "Corporation", color: "#facc15" },
-  Company: { label: "Company", color: "#facc15" },
-  Brand: { label: "Brand", color: "#facc15" },
-  Advertiser: { label: "Advertiser", color: "#facc15" },
-
-  AppDeveloper: { label: "Developer", color: "#a3e635" },
-  Developer: { label: "Developer", color: "#a3e635" },
-
-  AcademicResearcher: { label: "Researcher", color: "#7dd3fc" },
-  Scientist: { label: "Scientist", color: "#7dd3fc" },
-  Professor: { label: "Professor", color: "#7dd3fc" },
-
-  Subreddit: { label: "Subreddit", color: "#f472b6" },
-  Community: { label: "Community", color: "#f472b6" },
-  AlternativePlatform: { label: "Alt Platform", color: "#f472b6" },
-
-  VentureCapitalist: { label: "VC", color: "#facc15" },
-  FinancialAnalyst: { label: "Analyst", color: "#facc15" },
-
-  Student: { label: "Student", color: "#cbd5e1" },
-  Person: { label: "Person", color: "#cbd5e1" },
-  PowerUser: { label: "Power User", color: "#f472b6" },
-  ContentCreator: { label: "Creator", color: "#fb923c" },
-  RedditCoFounder: { label: "Co-founder", color: "#2dd4bf" },
+/** Human-facing label for the fixed role taxonomy. The enum itself
+ *  is stable — this is just for display. */
+export const ROLE_LABELS: Record<string, string> = {
+  public_figure: "Public figure",
+  organization: "Organization",
+  regulator: "Regulator",
+  advocate: "Advocate",
+  journalist: "Journalist",
+  investor: "Investor",
+  competitor: "Competitor",
+  customer: "Customer",
+  community: "Community",
+  academic: "Academic",
+  partner: "Partner",
+  insider: "Insider",
+  other: "Other",
+  Scenario: "Scenario",
 };
 
-const DEFAULT_ARCHETYPE: Archetype = {
-  label: "Other",
-  color: "#cbd5e1",
+/** Tint per role — soft, desaturated. Graph node color stays
+ *  per-persona; this is for badge chip backgrounds only. */
+export const ROLE_COLORS: Record<string, string> = {
+  public_figure: "#60a5fa",
+  organization: "#fbbf24",
+  regulator: "#c084fc",
+  advocate: "#4ade80",
+  journalist: "#fb923c",
+  investor: "#facc15",
+  competitor: "#f87171",
+  customer: "#818cf8",
+  community: "#f472b6",
+  academic: "#7dd3fc",
+  partner: "#2dd4bf",
+  insider: "#a3e635",
+  other: "#cbd5e1",
+  Scenario: "#22d3ee",
 };
 
-/**
- * Keyword → archetype scoring. The persona's `entity_type` from the
- * profile generator is free text (e.g. "Chief Executive Officer of
- * Apple Inc." or "Investment Bank - Technology Sector Equity Research"),
- * NOT a structured enum. So we keyword-match against the lowercased
- * description and pick the archetype with the highest score.
- *
- * Each rule contributes its weight when its pattern hits. Higher
- * weights reflect higher specificity — "vc" wins over "fund" when
- * both match.
- */
-const KEYWORD_RULES: { archetype: keyof typeof ARCHETYPE_MAP; pattern: RegExp; weight: number }[] = [
-  // Tech leadership
-  { archetype: "TechCEO", pattern: /\b(ceo|chief executive)\b/, weight: 6 },
-  { archetype: "TechCEO", pattern: /\b(founder|co-founder)\b/, weight: 4 },
-  { archetype: "TechExecutive", pattern: /\b(cto|cfo|coo|chief\s+\w+\s+officer|executive|president)\b/, weight: 4 },
-
-  // Media
-  { archetype: "Journalist", pattern: /\b(journalist|reporter|correspondent|editor)\b/, weight: 8 },
-  { archetype: "TechJournalist", pattern: /\b(tech(nology)?\s+(journalist|reporter|writer))\b/, weight: 9 },
-  { archetype: "MediaPersonality", pattern: /\b(youtube|youtuber|content creator|product reviewer|reviewer|host|podcaster)\b/, weight: 7 },
-  { archetype: "PoliticalCommentator", pattern: /\b(commentator|pundit|columnist)\b/, weight: 7 },
-
-  // Politics + government
-  { archetype: "Politician", pattern: /\b(senator|representative|congressman|congresswoman|politician|mayor|governor)\b/, weight: 8 },
-  { archetype: "GovernmentOfficial", pattern: /\b(government official|gov't official|official|secretary|administrator|attorney general)\b/, weight: 6 },
-  { archetype: "RegulatoryBody", pattern: /\b(regulator|commission|fcc|ftc|sec|doj|department of)\b/, weight: 7 },
-
-  // Business / finance
-  { archetype: "VentureCapitalist", pattern: /\b(venture capital|vc|venture capitalist)\b/, weight: 8 },
-  { archetype: "FinancialAnalyst", pattern: /\b(analyst|equity research|investment bank|wealth management|securities)\b/, weight: 7 },
-  { archetype: "Corporation", pattern: /\b(corporation|conglomerate|enterprise|company|inc|corp\.?|llc|ltd|gmbh)\b/, weight: 4 },
-  { archetype: "Brand", pattern: /\b(brand|advertiser|consumer brand)\b/, weight: 5 },
-
-  // Tech / platforms / studios
-  { archetype: "PlatformCompany", pattern: /\b(platform|social (network|media)|hardware (and|&) software)\b/, weight: 5 },
-  { archetype: "Corporation", pattern: /\b(studio|entertainment|gaming|distribution)\b/, weight: 4 },
-  { archetype: "AppDeveloper", pattern: /\b(developer|engineer|programmer|software engineer)\b/, weight: 5 },
-
-  // Research + academia
-  { archetype: "AcademicResearcher", pattern: /\b(researcher|research|scientist|phd|ph\.d|professor)\b/, weight: 6 },
-
-  // Communities + advocacy
-  { archetype: "AdvocacyGroup", pattern: /\b(advocacy|nonprofit|civil (rights|liberties)|aclu|eff)\b/, weight: 7 },
-  { archetype: "Community", pattern: /\b(subreddit|community|forum|fediverse)\b/, weight: 6 },
-  { archetype: "Subreddit", pattern: /\br\/\w+/, weight: 9 },
-];
-
-// Catch-alls if no keyword scored — biased toward the most common
-// archetypes for a given grammatical pattern.
-function fallbackArchetype(lower: string): keyof typeof ARCHETYPE_MAP | null {
-  if (/\b(tech(nology)?|vr|ar|ai|software)\b/.test(lower)) return "PlatformCompany";
-  if (/\b(news|media|publication)\b/.test(lower)) return "MediaPersonality";
-  if (/\b(invest(ment|or)|fund|capital|bank|finance|financial)\b/.test(lower)) return "FinancialAnalyst";
-  return null;
+export function labelForRole(role?: string): string {
+  if (!role) return "Persona";
+  return ROLE_LABELS[role] ?? role;
 }
 
-export function resolveArchetype(entityType?: string): Archetype {
+export function colorForRole(role?: string): string {
+  if (!role) return ROLE_COLORS.other;
+  return ROLE_COLORS[role] ?? ROLE_COLORS.other;
+}
+
+const DEFAULT_ARCHETYPE: Archetype = { label: "Persona", full: "Persona", color: "#cbd5e1" };
+
+function shorten(s: string, max = 26): string {
+  const trimmed = s.trim();
+  if (trimmed.length <= max) return trimmed;
+  // Try cutting at a natural break (em-dash, hyphen, comma) before max.
+  const cut = trimmed.slice(0, max);
+  const lastBreak = Math.max(
+    cut.lastIndexOf(" — "),
+    cut.lastIndexOf(" - "),
+    cut.lastIndexOf(", "),
+  );
+  if (lastBreak > max * 0.4) return cut.slice(0, lastBreak).trim();
+  return cut.replace(/\s+\S*$/, "") + "…";
+}
+
+export function resolveArchetype(entityType?: string, name?: string): Archetype {
   if (!entityType) return DEFAULT_ARCHETYPE;
-  // 1. Exact key match (canonical archetype names from the DB)
-  if (ARCHETYPE_MAP[entityType]) return ARCHETYPE_MAP[entityType];
-  const lower = entityType.toLowerCase();
-  // 2. Case-insensitive direct match
-  for (const [key, value] of Object.entries(ARCHETYPE_MAP)) {
-    if (key.toLowerCase() === lower) return value;
+  return {
+    label: shorten(entityType),
+    full: entityType,
+    color: name ? personaColor(name) : DEFAULT_ARCHETYPE.color,
+  };
+}
+
+/** Resolve archetype preferring role when present. Returns the
+ *  human-readable role label from ROLE_LABELS with the role color,
+ *  falling back to the free-text entity_type resolution. */
+export function resolveRoleArchetype(
+  role?: string,
+  entityType?: string,
+  name?: string,
+): Archetype {
+  if (role && ROLE_LABELS[role]) {
+    return {
+      label: ROLE_LABELS[role],
+      full: entityType || ROLE_LABELS[role],
+      color: ROLE_COLORS[role] ?? DEFAULT_ARCHETYPE.color,
+    };
   }
-  // 3. Keyword scoring on the free-text description
-  let best: { archetype: keyof typeof ARCHETYPE_MAP; score: number } | null = null;
-  for (const rule of KEYWORD_RULES) {
-    if (rule.pattern.test(lower)) {
-      const cur = best?.score ?? 0;
-      if (rule.weight > cur) best = { archetype: rule.archetype, score: rule.weight };
-    }
-  }
-  if (best && ARCHETYPE_MAP[best.archetype]) return ARCHETYPE_MAP[best.archetype];
-  // 4. Heuristic fallback by domain keywords
-  const fb = fallbackArchetype(lower);
-  if (fb && ARCHETYPE_MAP[fb]) return ARCHETYPE_MAP[fb];
-  return DEFAULT_ARCHETYPE;
+  return resolveArchetype(entityType, name);
 }
