@@ -10,7 +10,7 @@
  *     useSimulationEvents(computed(() => route.params.simId));
  */
 
-import { onBeforeUnmount, ref, watch, type Ref } from "vue";
+import { onBeforeUnmount, ref, watch, watchEffect, type Ref } from "vue";
 import { getStatus } from "@/api/simulation";
 import { SimulationEventStream } from "@/lib/events";
 import { resolveArchetype } from "@/lib/archetypes";
@@ -112,9 +112,9 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     try {
       const { getInteractions } = await import("@/api/simulation");
       const list = await getInteractions(simId);
+      // Setting the ref triggers the watchEffect above — no manual
+      // rebuild call needed.
       interactions.value = list;
-      // Re-fuse the graph so interaction edges show up
-      rebuildGraph();
     } catch (err) {
       console.warn("interactions fetch failed:", err);
     }
@@ -132,17 +132,26 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     }
   }
 
-  // Snapshot of last fused inputs so we can rebuild after interactions
-  // change without re-fetching everything.
-  let lastFusedNodes: GraphNode[] = [];
-  let lastFusedEdges: GraphEdge[] = [];
-  function rebuildGraph() {
-    const withHub = injectScenarioHub(lastFusedNodes, lastFusedEdges, scenario.value);
+  // Base nodes + edges from the latest hydrateAgents run. Held as
+  // refs so the watchEffect below can detect updates and re-derive
+  // the final agents/edges arrays reactively — no manual
+  // rebuildGraph() coordination, no race when scenario loads after
+  // agents do.
+  const baseNodes = ref<GraphNode[]>([]);
+  const baseEdges = ref<GraphEdge[]>([]);
+
+  // Any time the base graph data OR the scenario OR the interactions
+  // change, re-derive agents + edges automatically. Actions are
+  // deliberately NOT a dep — handleAction mutates agents[i].post_count
+  // in-place for live updates, and we don't want a recompute that
+  // discards those mutations on every SSE event.
+  watchEffect(() => {
+    const withHub = injectScenarioHub(baseNodes.value, baseEdges.value, scenario.value);
     const withInteractions = layerInteractions(withHub.nodes, withHub.edges, interactions.value);
     const enriched = enrichNodeMetrics(withInteractions.nodes, interactions.value, actions.value);
     agents.value = enriched;
     edges.value = withInteractions.edges;
-  }
+  });
 
   function applySnapshot(snap: SimSnapshot) {
     snapshot.value = snap;
@@ -245,13 +254,15 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
       }
 
       if (fused) {
-        lastFusedNodes = fused.nodes;
-        lastFusedEdges = fused.edges;
+        baseNodes.value = fused.nodes;
+        baseEdges.value = fused.edges;
       } else {
-        lastFusedNodes = personaNodes;
-        lastFusedEdges = buildArchetypeEdges(personaNodes);
+        baseNodes.value = personaNodes;
+        baseEdges.value = buildArchetypeEdges(personaNodes);
       }
-      rebuildGraph();
+      // watchEffect above picks up the ref change and re-derives
+      // agents + edges — including the scenario hub + interactions,
+      // so there's no race even if scenario loads later.
     } catch (err) {
       console.warn("Failed to hydrate agents:", err);
     }

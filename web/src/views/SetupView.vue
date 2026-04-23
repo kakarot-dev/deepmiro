@@ -1,12 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
+import {
+  Sparkles,
+  Upload,
+  X,
+  Loader2,
+  Zap,
+  Waves,
+  Mountain,
+  FileText,
+  ArrowRight,
+  LogIn,
+  KeyRound,
+} from "lucide-vue-next";
+import Card from "@/components/ui/Card.vue";
+import Button from "@/components/ui/Button.vue";
+import Badge from "@/components/ui/Badge.vue";
+import Input from "@/components/ui/Input.vue";
+import Textarea from "@/components/ui/Textarea.vue";
+import ToggleGroup from "@/components/ui/ToggleGroup.vue";
 import { createSim, uploadDoc } from "@/api/simulation";
-import { hasApiKey, setApiKey } from "@/api/client";
+import { setApiKey } from "@/api/client";
 import { useAuth } from "@/composables/useAuth";
 
 const router = useRouter();
-const { mode, checking, check, signInUrl, userEmail, userName } = useAuth();
+const { mode, checking, check, signInUrl } = useAuth();
 
 const prompt = ref("");
 const preset = ref<"quick" | "standard" | "deep">("standard");
@@ -18,30 +37,50 @@ const error = ref<string | null>(null);
 const uploadedDocId = ref<string | null>(null);
 const uploadedFileName = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const dragOver = ref(false);
 
 const authenticated = computed(
   () => mode.value === "session" || mode.value === "api_key",
 );
 
-onMounted(() => {
-  // useAuth() already runs check() on mount
-});
+const presetOptions = [
+  { value: "quick" as const, label: "Quick", hint: "10 · 20 rounds · ~3m" },
+  { value: "standard" as const, label: "Standard", hint: "20 · 40 rounds · ~8m" },
+  { value: "deep" as const, label: "Deep", hint: "50+ · 72 rounds · ~20m" },
+];
+const platformOptions = [
+  { value: "both" as const, label: "Twitter + Reddit", hint: "full cross-platform" },
+  { value: "twitter" as const, label: "Twitter only", hint: "tighter, faster" },
+  { value: "reddit" as const, label: "Reddit only", hint: "threaded depth" },
+];
+const presetIcons = { quick: Zap, standard: Waves, deep: Mountain };
+
+const examples = [
+  {
+    title: "Elon buys Reddit",
+    body: 'Elon Musk announces he is acquiring Reddit for $5 billion and rebuilding it as "Reddit X". Simulate how Steve Huffman, Christian Selig (Apollo dev), Jack Dorsey, AOC, Tucker Carlson, and the Lemmy fediverse community react over 72 hours.',
+  },
+  {
+    title: "OpenAI open-sources GPT-5",
+    body: "OpenAI announces it will open-source GPT-5. Simulate reactions from Sam Altman, Dario Amodei, Yann LeCun, Mark Zuckerberg, Marc Andreessen, Lina Khan, and the broader AI community.",
+  },
+  {
+    title: "Apple ships Claude-powered Siri",
+    body: "Apple ships an AI-powered Siri replacement built on Claude. Simulate how Tim Cook, Satya Nadella, Sundar Pichai, tech journalists, privacy advocates, and power users react over 48 hours.",
+  },
+];
 
 async function saveApiKey() {
-  if (apiKey.value.trim()) {
-    setApiKey(apiKey.value.trim());
-    await check();
-    showKeyOption.value = false;
-  }
+  if (!apiKey.value.trim()) return;
+  setApiKey(apiKey.value.trim());
+  await check();
+  showKeyOption.value = false;
 }
 
-async function handleFileSelect(event: Event) {
-  const target = event.target as HTMLInputElement;
-  const file = target.files?.[0];
-  if (!file) return;
+async function handleFile(file: File) {
   error.value = null;
+  submitting.value = true;
   try {
-    submitting.value = true;
     const result = await uploadDoc(file);
     uploadedDocId.value = result.document_id;
     uploadedFileName.value = result.filename;
@@ -51,7 +90,15 @@ async function handleFileSelect(event: Event) {
     submitting.value = false;
   }
 }
-
+async function onFileSelect(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (file) await handleFile(file);
+}
+async function onDrop(e: DragEvent) {
+  dragOver.value = false;
+  const file = e.dataTransfer?.files?.[0];
+  if (file) await handleFile(file);
+}
 function clearDoc() {
   uploadedDocId.value = null;
   uploadedFileName.value = null;
@@ -80,152 +127,193 @@ async function submit() {
   } catch (err: any) {
     const msg = err?.response?.data?.error ?? err?.message ?? "Failed to start simulation";
     error.value = msg;
-    if (err?.response?.status === 401) {
-      showKeyOption.value = true;
-    }
+    if (err?.response?.status === 401) showKeyOption.value = true;
   } finally {
     submitting.value = false;
   }
 }
 
-const examples = [
-  "Elon Musk announces he's acquiring Reddit for $5 billion and rebuilding it as \"Reddit X\". Simulate how Steve Huffman, Christian Selig (Apollo dev), Jack Dorsey, AOC, Bernie Sanders, Tucker Carlson, Ben Shapiro, and the Lemmy fediverse community react over 72 hours.",
-  "OpenAI announces it will open-source GPT-5. Simulate reactions from Sam Altman, Dario Amodei, Yann LeCun, Mark Zuckerberg, Marc Andreessen, Lina Khan, and the broader AI community over 72 hours.",
-  "Apple ships an AI-powered Siri replacement built on Claude. Simulate how Tim Cook, Satya Nadella, Sundar Pichai, tech journalists, privacy advocates, and power users react.",
-];
-
 function useExample(text: string) {
   prompt.value = text;
+  const el = document.querySelector<HTMLTextAreaElement>(".prompt-area textarea");
+  el?.focus();
+  el?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 </script>
 
 <template>
   <div class="setup-view">
-    <div v-if="checking" class="setup-checking">
-      <div class="loading-spinner" />
+    <!-- Loading gate -->
+    <div v-if="checking" class="state-full">
+      <Loader2 :size="28" class="spin" />
     </div>
 
-    <div v-else-if="!authenticated" class="auth-gate">
-      <div class="auth-card">
-        <h2>Sign in to run predictions</h2>
-        <p class="auth-lede">
-          DeepMiro needs to know who you are so we can scope simulations,
-          bill usage correctly, and let you interview your agents later.
-        </p>
-        <a :href="signInUrl('https://app.deepmiro.org/')" class="primary lg">
-          Sign in with DeepMiro
-        </a>
-        <button
-          class="link"
-          type="button"
-          @click="showKeyOption = !showKeyOption"
-        >
-          Or paste an API key instead
-        </button>
-        <div v-if="showKeyOption" class="api-key-block">
-          <input
-            v-model="apiKey"
-            type="password"
-            placeholder="dm_..."
-            autocomplete="off"
-            @keyup.enter="saveApiKey"
-          />
-          <button
-            class="primary"
-            :disabled="!apiKey.trim()"
-            @click="saveApiKey"
-          >
-            Save key
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <div v-else class="setup-form">
-      <div class="setup-header">
-        <h1>Run a prediction</h1>
-        <p class="lede">
-          Describe a scenario. DeepMiro generates hundreds of agents with distinct
-          personas, simulates their reactions on Twitter and Reddit, and returns
-          a prediction report.
-        </p>
-      </div>
-
-      <div class="form-card">
-        <label class="field">
-          <span class="field-label">Scenario</span>
-          <textarea
-            v-model="prompt"
-            rows="8"
-            placeholder="Paste your scenario, announcement, or document summary here..."
-          />
-          <div class="field-hint">
-            Tip: name specific people, companies, and opposing viewpoints for richer personas.
+    <!-- Auth gate -->
+    <div v-else-if="!authenticated" class="state-full">
+      <Card class="auth-card" :padded="false">
+        <div class="auth-inner">
+          <div class="auth-glow">
+            <Sparkles :size="32" />
           </div>
-        </label>
-
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Simulation depth</span>
-            <select v-model="preset">
-              <option value="quick">Quick — 10 agents, 20 rounds (~3 min)</option>
-              <option value="standard">Standard — 20 agents, 40 rounds (~8 min)</option>
-              <option value="deep">Deep — 50+ agents, 72 rounds (~20 min)</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span class="field-label">Platforms</span>
-            <select v-model="platform">
-              <option value="both">Twitter + Reddit</option>
-              <option value="twitter">Twitter only</option>
-              <option value="reddit">Reddit only</option>
-            </select>
-          </label>
-        </div>
-
-        <label class="field">
-          <span class="field-label">Supporting document (optional)</span>
-          <div class="file-row">
-            <input
-              ref="fileInput"
-              type="file"
-              accept=".pdf,.md,.txt"
-              class="file-input"
-              @change="handleFileSelect"
+          <h2>Sign in to run predictions</h2>
+          <p class="auth-lede">
+            DeepMiro scopes simulations to your account so you can come back to
+            interview agents, compare predictions, and track history.
+          </p>
+          <a :href="signInUrl('https://app.deepmiro.org/')" class="btn-link full">
+            <Button variant="primary">
+              <LogIn :size="14" />
+              Sign in with DeepMiro
+            </Button>
+          </a>
+          <button class="text-link" type="button" @click="showKeyOption = !showKeyOption">
+            Or paste an API key instead
+          </button>
+          <div v-if="showKeyOption" class="api-block">
+            <Input
+              v-model="apiKey"
+              type="password"
+              placeholder="dm_..."
+              mono
+              @enter="saveApiKey"
             />
-            <div v-if="uploadedFileName" class="file-chip">
-              {{ uploadedFileName }}
-              <button class="chip-clear" @click="clearDoc">×</button>
-            </div>
+            <Button variant="primary" :disabled="!apiKey.trim()" @click="saveApiKey">
+              <KeyRound :size="14" />
+              Save
+            </Button>
           </div>
-          <div class="field-hint">PDF, Markdown, or plain text. Max 10MB.</div>
-        </label>
-
-        <div v-if="error" class="form-error">{{ error }}</div>
-
-        <button
-          class="primary lg"
-          :disabled="submitting || prompt.trim().length < 20"
-          @click="submit"
-        >
-          {{ submitting ? "Starting..." : "Run prediction" }}
-        </button>
-      </div>
-
-      <div class="examples">
-        <h3>Examples</h3>
-        <div class="example-grid">
-          <button
-            v-for="(ex, i) in examples"
-            :key="i"
-            class="example-card"
-            @click="useExample(ex)"
-          >
-            {{ ex }}
-          </button>
         </div>
-      </div>
+      </Card>
+    </div>
+
+    <!-- Setup form -->
+    <div v-else class="setup-form">
+      <header class="hero">
+        <Badge variant="outline" class="kicker">
+          <Sparkles :size="11" /> DeepMiro prediction engine
+        </Badge>
+        <h1>Describe a scenario. Watch it play out.</h1>
+        <p class="lede">
+          Paste a news event, announcement, or hypothetical. We'll extract the
+          stakeholders, spin up a persona for each, and simulate how the
+          conversation unfolds on Twitter and Reddit.
+        </p>
+      </header>
+
+      <Card class="form-card" :padded="false">
+        <div class="form-inner">
+          <!-- Prompt -->
+          <section class="field prompt-area">
+            <div class="field-head">
+              <span class="label">Scenario</span>
+              <span class="count">{{ prompt.length }} chars</span>
+            </div>
+            <Textarea
+              v-model="prompt"
+              placeholder="e.g. &quot;Tesla launches a $25k robotaxi with no steering wheel, subscription-only. Simulate reactions from Waymo, Ford, NHTSA, Cathie Wood, Ralph Nader, rideshare drivers, and Jim Chanos over 72 hours.&quot;"
+              :rows="7"
+            />
+            <p class="hint">
+              Name specific people, companies, and opposing viewpoints — richer
+              prompts produce richer personas.
+            </p>
+          </section>
+
+          <!-- Preset + Platform -->
+          <section class="field">
+            <div class="field-head">
+              <span class="label">Simulation depth</span>
+            </div>
+            <ToggleGroup v-model="preset" :options="presetOptions" />
+          </section>
+
+          <section class="field">
+            <div class="field-head">
+              <span class="label">Platforms</span>
+            </div>
+            <ToggleGroup v-model="platform" :options="platformOptions" />
+          </section>
+
+          <!-- Upload -->
+          <section class="field">
+            <div class="field-head">
+              <span class="label">Supporting document</span>
+              <span class="hint-inline">optional · PDF / MD / TXT · 10MB</span>
+            </div>
+            <div
+              v-if="!uploadedFileName"
+              class="drop-zone"
+              :class="{ 'drag-over': dragOver }"
+              @click="fileInput?.click()"
+              @dragover.prevent="dragOver = true"
+              @dragleave.prevent="dragOver = false"
+              @drop.prevent="onDrop"
+            >
+              <input
+                ref="fileInput"
+                type="file"
+                accept=".pdf,.md,.txt"
+                class="hidden-input"
+                @change="onFileSelect"
+              />
+              <Upload :size="20" />
+              <span class="drop-primary">Drop a file or click to upload</span>
+              <span class="drop-secondary">adds scenario context for personas to reason about</span>
+            </div>
+            <div v-else class="file-chip">
+              <FileText :size="14" />
+              <span class="file-name">{{ uploadedFileName }}</span>
+              <button class="chip-x" @click="clearDoc">
+                <X :size="12" />
+              </button>
+            </div>
+          </section>
+
+          <!-- Error -->
+          <div v-if="error" class="form-error">{{ error }}</div>
+
+          <!-- Submit -->
+          <Button
+            class="submit"
+            variant="primary"
+            :disabled="submitting || prompt.trim().length < 20"
+            @click="submit"
+          >
+            <Loader2 v-if="submitting" :size="14" class="spin" />
+            <Sparkles v-else :size="14" />
+            {{ submitting ? "Starting…" : "Run prediction" }}
+            <ArrowRight v-if="!submitting" :size="14" />
+          </Button>
+        </div>
+      </Card>
+
+      <!-- Examples -->
+      <section class="examples">
+        <div class="examples-head">
+          <h3>Try an example</h3>
+          <span class="hint-inline">click to fill the prompt</span>
+        </div>
+        <div class="example-grid">
+          <Card
+            v-for="ex in examples"
+            :key="ex.title"
+            hoverable
+            :padded="false"
+            class="example-card"
+            @click="useExample(ex.body)"
+          >
+            <div class="ex-inner">
+              <div class="ex-icon">
+                <Sparkles :size="14" />
+              </div>
+              <div>
+                <div class="ex-title">{{ ex.title }}</div>
+                <div class="ex-body">{{ ex.body }}</div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -235,65 +323,62 @@ function useExample(text: string) {
   height: 100%;
   overflow-y: auto;
   padding: var(--gap-xl) var(--gap-lg);
+  background:
+    radial-gradient(ellipse 900px 500px at 50% -10%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 65%),
+    var(--bg);
 }
-
-.setup-checking {
+.state-full {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100%;
-}
-
-.loading-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border);
-  border-top-color: var(--primary);
-  border-radius: var(--radius-full);
-  animation: spin 1s linear infinite;
-}
-
-.auth-gate {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100%;
+  min-height: 80vh;
   padding: var(--gap-xl);
+  color: var(--fg-subtle);
 }
+.spin { animation: spin 1.2s linear infinite; }
 
+/* Auth gate */
 .auth-card {
   max-width: 440px;
-  padding: var(--gap-xl);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  text-align: center;
-  box-shadow: var(--shadow-md);
-}
-
-.auth-card h2 {
-  font-size: 22px;
-  font-weight: 600;
-  margin-bottom: var(--gap-sm);
-  color: var(--fg-strong);
-  letter-spacing: -0.01em;
-}
-
-.auth-lede {
-  font-size: 14px;
-  color: var(--fg-muted);
-  margin-bottom: var(--gap-lg);
-  line-height: 1.6;
-}
-
-.auth-card .primary.lg {
-  display: inline-block;
   width: 100%;
-  margin-bottom: var(--gap-md);
-  text-decoration: none;
+  overflow: hidden;
 }
-
-.link {
+.auth-inner {
+  padding: var(--gap-xl);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  align-items: center;
+}
+.auth-glow {
+  width: 64px;
+  height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+  box-shadow: 0 0 40px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.auth-inner h2 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-strong);
+  margin: 0;
+}
+.auth-lede {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  margin: 0;
+}
+.btn-link { display: block; text-decoration: none; }
+.btn-link.full { width: 100%; }
+.btn-link :deep(.btn) { width: 100%; }
+.text-link {
   background: none;
   border: none;
   color: var(--fg-muted);
@@ -302,278 +387,226 @@ function useExample(text: string) {
   cursor: pointer;
   padding: 6px;
 }
-
-.link:hover {
-  color: var(--fg);
-}
-
-.api-key-block {
+.text-link:hover { color: var(--fg); }
+.api-block {
   display: flex;
   gap: var(--gap-sm);
-  margin-top: var(--gap-md);
-}
-
-.api-key-block input {
-  flex: 1;
-  padding: 10px 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--fg);
-  font-family: var(--font-mono);
-  font-size: 13px;
-}
-
-.api-key-block input:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-muted);
-}
-
-.api-key-block .primary {
-  padding: 10px 20px;
-}
-
-.prompt-card {
-  max-width: 440px;
-  padding: var(--gap-xl);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  text-align: center;
-}
-
-.prompt-card h2 {
-  font-size: 20px;
-  font-weight: 600;
-  margin-bottom: var(--gap-sm);
-  color: var(--fg-strong);
-}
-
-.prompt-card p {
-  font-size: 14px;
-  color: var(--fg-muted);
-  margin-bottom: var(--gap-md);
-}
-
-.prompt-card input {
   width: 100%;
-  padding: 10px 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--fg);
-  font-family: var(--font-mono);
-  margin-bottom: var(--gap-md);
+  margin-top: 4px;
 }
+.api-block > :first-child { flex: 1; }
 
-.prompt-card input:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-muted);
-}
-
-.prompt-card button {
-  width: 100%;
-}
-
+/* Main form */
 .setup-form {
   max-width: 780px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xl);
 }
-
-.setup-header {
-  margin-bottom: var(--gap-xl);
+.hero {
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-md);
+  padding-top: var(--gap-lg);
 }
-
-.setup-header h1 {
-  font-size: 32px;
+.kicker {
+  gap: 6px;
+}
+.hero h1 {
+  font-size: 38px;
   font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
   color: var(--fg-strong);
-  margin-bottom: var(--gap-sm);
-  letter-spacing: -0.02em;
+  margin: 0;
+  max-width: 620px;
+  background: linear-gradient(180deg, var(--fg-strong), color-mix(in srgb, var(--fg-strong) 70%, var(--primary)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
-
 .lede {
   font-size: 15px;
+  line-height: 1.6;
   color: var(--fg-muted);
-  max-width: 580px;
-  margin: 0 auto;
+  max-width: 600px;
+  margin: 0;
 }
 
 .form-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--gap-lg);
-  display: grid;
-  gap: var(--gap-md);
-  box-shadow: var(--shadow-md);
-  margin-bottom: var(--gap-xl);
+  box-shadow: var(--shadow-lg);
 }
-
+.form-inner {
+  padding: var(--gap-lg) var(--gap-lg) var(--gap-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-lg);
+}
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
-
-.field-label {
+.field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+.label {
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--fg-muted);
 }
-
-.field-hint {
+.count {
+  font-size: 11px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-subtle);
+}
+.hint-inline {
   font-size: 11px;
   color: var(--fg-subtle);
 }
 
-.field-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--gap-md);
-}
-
-textarea,
-select,
-input[type="file"] {
-  padding: 10px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--fg);
-  font-family: inherit;
-  font-size: 14px;
-  transition: border-color var(--duration-fast) var(--ease-out);
-}
-
-textarea {
-  resize: vertical;
-  min-height: 140px;
-  line-height: 1.5;
-}
-
-textarea:focus,
-select:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-muted);
-}
-
-.file-row {
+/* Drop zone */
+.drop-zone {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--gap-sm);
-  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--gap-lg);
+  background: var(--bg);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
 }
-
-.file-input {
-  flex: 1;
-  min-width: 0;
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 5%, var(--bg));
+  color: var(--primary);
 }
-
+.drop-primary { font-size: 13px; font-weight: 500; }
+.drop-secondary { font-size: 11px; color: var(--fg-subtle); }
+.hidden-input { display: none; }
 .file-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: var(--primary-muted);
-  color: var(--primary);
-  border-radius: var(--radius-full);
-  font-size: 12px;
-}
-
-.chip-clear {
-  font-size: 16px;
-  line-height: 1;
-  color: var(--primary);
-  padding: 0 4px;
-}
-
-.chip-clear:hover {
-  color: var(--fg-strong);
-}
-
-.primary {
-  padding: 10px 20px;
-  background: var(--primary);
-  color: var(--bg);
-  font-weight: 600;
+  gap: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
   border-radius: var(--radius-md);
-  transition:
-    background var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+  color: var(--primary);
+  font-size: 13px;
+  width: fit-content;
+  max-width: 100%;
 }
-
-.primary:hover:not(:disabled) {
-  background: var(--primary-hover);
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.primary:active:not(:disabled) {
-  transform: translateY(1px);
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
 }
-
-.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.primary.lg {
-  padding: 14px 28px;
-  font-size: 15px;
-  letter-spacing: 0.02em;
-}
+.chip-x:hover { background: color-mix(in srgb, var(--primary) 20%, transparent); }
 
 .form-error {
   padding: 10px 14px;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
   border-radius: var(--radius-md);
   color: var(--danger);
   font-size: 13px;
+  line-height: 1.5;
+}
+.submit {
+  align-self: stretch;
+  justify-content: center;
+  height: 44px;
+  font-size: 14px;
+  margin-top: 4px;
 }
 
+/* Examples */
 .examples {
-  margin-top: var(--gap-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
 }
-
-.examples h3 {
-  font-size: 12px;
+.examples-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+.examples-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fg-muted);
-  margin-bottom: var(--gap-md);
 }
-
 .example-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--gap-md);
 }
-
-.example-card {
-  text-align: left;
+.example-card { cursor: pointer; }
+.ex-inner {
+  display: flex;
+  gap: var(--gap-sm);
   padding: var(--gap-md);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--fg-muted);
-  font-size: 13px;
-  line-height: 1.5;
-  transition:
-    border-color var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out);
-  cursor: pointer;
+  align-items: flex-start;
 }
-
-.example-card:hover {
-  border-color: var(--primary);
-  background: var(--card-hover);
-  color: var(--fg);
+.ex-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+.ex-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-strong);
+  margin-bottom: 4px;
+}
+.ex-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>

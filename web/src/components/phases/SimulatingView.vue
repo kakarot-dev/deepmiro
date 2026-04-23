@@ -175,6 +175,12 @@ watch(redditActions, async () => {
   letter-spacing: 0.02em;
 }
 .count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
   font-size: 11px;
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;

@@ -397,6 +397,16 @@ class PersonaPromptBuilder:
         verbal_tics = s.get("verbal_tics") or []
         never_say = s.get("never_say") or []
         speaking_style = (s.get("speaking_style") or "").strip()
+        role = (s.get("role") or "other").strip().lower()
+
+        # Track how many of the last 3 actions were CREATE_POST so the
+        # Task block can force engagement when the agent is monologuing.
+        consecutive_posts = 0
+        for a in (recent_own_actions or [])[:3]:
+            if isinstance(a, dict) and a.get("action_type") == "CREATE_POST":
+                consecutive_posts += 1
+            else:
+                break
 
         lines: List[str] = []
 
@@ -535,7 +545,20 @@ class PersonaPromptBuilder:
                     lines.append(f'- **{name}**{meta_str}: "{excerpt}"')
                 lines.append("")
 
-        # ── Reaction framing ──
+        # ── Reaction framing + engagement pressure ──
+        #
+        # Without this block, agents default to CREATE_POST every
+        # round because picking a target post_id for LIKE/QUOTE/
+        # COMMENT is harder for the LLM than just writing text. That
+        # produces sims where every agent monologues and no one
+        # interacts — edges in the graph stay empty.
+        #
+        # The guidance below: (1) gives a target post-vs-engage ratio,
+        # (2) points at the trending feed as the right place to find
+        # things to react to, (3) role-tilts the natural action mix
+        # based on the structured `role` enum, and (4) hard-caps
+        # consecutive CREATE_POSTs for an agent that's been drifting
+        # into monologue mode.
         lines.append("## Task")
         lines.append(
             f"When asked what to do next, answer: "
@@ -545,6 +568,99 @@ class PersonaPromptBuilder:
             f"Do not seek balance. "
             f"Do not quote opposing organizations or positions."
         )
+        lines.append("")
+        lines.append("### How to engage")
+        lines.append(
+            "Real people READ what others are saying and REACT far more "
+            "often than they originate. Do not just broadcast. "
+            f"Before every action, scan **What is trending** above and pick "
+            f"a specific post that {agent_name} has real feelings about, then "
+            f"LIKE it (agreement), QUOTE_POST it (public signal-boost or "
+            f"critique), or CREATE_COMMENT on it (thread-level reply, Reddit only). "
+            f"Aim for roughly **30% CREATE_POST / 70% engagement** over time."
+        )
+        # Role-tilt: push certain archetypes toward their natural action mix.
+        role_guidance: dict[str, str] = {
+            "journalist": (
+                "As a journalist, your natural action is QUOTE_POST on other "
+                "agents' claims — you comment on news, you don't just post "
+                "manifestos. Pure CREATE_POST should be rare for you."
+            ),
+            "advocate": (
+                "As an advocate, most of your reactions are QUOTE_POST "
+                "(critical of opposing positions) or CREATE_COMMENT. "
+                "Standalone CREATE_POST is fine when calling out a new threat."
+            ),
+            "regulator": (
+                "As a regulator, you speak rarely and with weight. Prefer "
+                "DO_NOTHING unless something directly within your remit just "
+                "happened. CREATE_POST should be an authoritative statement, "
+                "not a reaction."
+            ),
+            "investor": (
+                "As an investor, you react to material news. QUOTE_POST on "
+                "analyst takes you agree or disagree with, LIKE_POST on "
+                "thesis-aligned content. Originate a CREATE_POST only when "
+                "the market implication is material."
+            ),
+            "competitor": (
+                "As a competitor, you selectively QUOTE_POST the scenario "
+                "subject's claims to counter-position your own product. "
+                "Direct CREATE_POST is for your own announcement, not for "
+                "reacting."
+            ),
+            "customer": (
+                "As a customer / end-user, mostly LIKE_POST or CREATE_COMMENT "
+                "on takes that match your experience. CREATE_POST when you "
+                "have a specific complaint or endorsement."
+            ),
+            "community": (
+                "As a community account, you amplify — REPOST, LIKE, and "
+                "COMMENT heavily on posts matching your community's values."
+            ),
+            "public_figure": (
+                "As a public figure, mix LIKE_POST (agreement signal) and "
+                "QUOTE_POST (public critique / endorsement) with occasional "
+                "authoritative CREATE_POST. Don't post for posting's sake."
+            ),
+            "organization": (
+                "As an organization account, keep CREATE_POST scarce and "
+                "official. Reactions are mostly LIKE_POST on partner "
+                "content or QUOTE_POST when publicly supporting an ally."
+            ),
+            "academic": (
+                "As an academic, QUOTE_POST analysis-oriented claims with "
+                "data or counter-evidence. CREATE_POST for significant "
+                "findings only."
+            ),
+            "partner": (
+                "As a partner of the scenario subject, LIKE and QUOTE "
+                "supportive content visibly. CREATE_POST when announcing "
+                "your own contribution."
+            ),
+            "insider": (
+                "As an insider, you know details outsiders don't. Use "
+                "CREATE_COMMENT and QUOTE_POST to add context. CREATE_POST "
+                "rarely, only when you're breaking news."
+            ),
+        }
+        if role in role_guidance:
+            lines.append("")
+            lines.append(role_guidance[role])
+
+        # Consecutive-post guard — if this agent has posted in the last
+        # 2-3 rounds with nothing else, force a reactive action this round.
+        if consecutive_posts >= 2:
+            lines.append("")
+            lines.append(
+                f"**IMPORTANT:** {agent_name} has taken CREATE_POST for the "
+                f"last {consecutive_posts} rounds in a row. You are starting "
+                f"to monologue. This round you MUST pick a non-post action — "
+                f"LIKE_POST, QUOTE_POST, CREATE_COMMENT, REPOST, or FOLLOW — "
+                f"targeting a specific post from another agent in the "
+                f"**What is trending** feed. Original CREATE_POST is "
+                f"disallowed this round."
+            )
 
         # ── Platform suffix (language enforcement, efficiency rules, etc.) ──
         if platform_suffix:
@@ -835,12 +951,24 @@ class AgentPager:
             return []
 
         highlights: List[Dict[str, Any]] = []
-        for user_id, content, num_likes, num_shares in rows:
-            # Only surface posts with at least SOME engagement — a post
-            # nobody liked isn't viral, it's just first in line.
+        # First pass: posts that already have engagement (true viral).
+        engaged: List[tuple] = []
+        fresh: List[tuple] = []
+        for row in rows:
+            _, _, num_likes, num_shares = row
             total = int(num_likes or 0) + int(num_shares or 0)
-            if total <= 0:
-                continue
+            (engaged if total > 0 else fresh).append(row)
+        # Cold-start backfill: early rounds have zero likes anywhere so
+        # the engaged list is empty. Without anything in "What is
+        # trending" the Character Brief gives agents no target to react
+        # to and they fall back to CREATE_POST every round. Mix in
+        # recent posts even without likes so they always have something
+        # to QUOTE / LIKE / COMMENT on.
+        picked = list(engaged)
+        if len(picked) < int(limit):
+            needed = int(limit) - len(picked)
+            picked.extend(fresh[:needed])
+        for user_id, content, num_likes, num_shares in picked[: int(limit)]:
             name = self._agent_names.get(int(user_id), f"Agent_{user_id}")
             highlights.append({
                 "agent_name": name,

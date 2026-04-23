@@ -19,9 +19,23 @@ interface Props {
 }
 const props = defineProps<Props>();
 
+// Action types whose action_args.post_id refers to a *target* post
+// the actor is responding to — not the post they're creating. Gate
+// the quoted block on this so CREATE_POST doesn't render a bogus
+// "↳ post #N wrote (not in view buffer)" referencing its own id.
+const TARGET_POST_ACTIONS = new Set([
+  "LIKE_POST",
+  "UPVOTE_POST",
+  "UPVOTE",
+  "CREATE_COMMENT",
+  "QUOTE_POST",
+  "REPOST",
+  "RETWEET",
+]);
 const targetPostId = computed<number | null>(() => {
+  if (!TARGET_POST_ACTIONS.has(props.action.action_type)) return null;
   const args: any = props.action.action_args ?? {};
-  const id = args.post_id ?? args.target_post_id;
+  const id = args.post_id ?? args.target_post_id ?? args.quoted_id;
   return typeof id === "number" ? id : null;
 });
 const targetPost = computed(() => {
@@ -52,7 +66,14 @@ const handle = computed(() =>
     .replace(/^_|_$/g, "")
     .slice(0, 22) || "agent",
 );
-const content = computed(() => props.action.action_args?.content ?? "");
+// The actor's own writing for this action. For CREATE_POST / COMMENT
+// it's in `content`; for QUOTE_POST the LLM puts the actor's quote
+// in `quote_content` (and `content` holds the new combined post).
+// Either way the caller wants to see what THIS agent said.
+const content = computed(() => {
+  const args: any = props.action.action_args ?? {};
+  return args.content || args.quote_content || "";
+});
 
 const actionIcon = computed(() => {
   switch (props.action.action_type) {

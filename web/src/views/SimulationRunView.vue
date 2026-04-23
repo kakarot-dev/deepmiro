@@ -411,9 +411,11 @@ const terminalLabel = computed(() => {
   max-width: 60vw;
 }
 .floating-actions {
+  /* Bottom-right corner so it doesn't overlap the rail's Twitter
+     count chip in the top-right of the right column. */
   position: absolute;
-  top: 50px;
-  right: var(--gap-lg);
+  bottom: var(--gap-md);
+  right: var(--gap-md);
   z-index: 8;
 }
 .error-toast {

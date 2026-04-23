@@ -139,19 +139,26 @@ spec:
         # (see engine/scripts/twhin_rec.py startup retry loop), so a
         # delayed sidecar won't crash a sim — it'll fall back to the
         # "recent posts" recommender path until ready.
+        # CPU torch + transformers can take >1s to respond to /healthz
+        # under load. Default Kubernetes probe timeout is 1s — that was
+        # killing the sidecar and taking the whole pod out of service.
+        # Raised timeoutSeconds and failureThreshold so momentary
+        # slowness doesn't restart the container.
         livenessProbe:
           httpGet:
             path: /healthz
             port: {{ .Values.twhinSidecar.port }}
           initialDelaySeconds: 60
           periodSeconds: 30
-          failureThreshold: 5
+          timeoutSeconds: 5
+          failureThreshold: 10
         readinessProbe:
           httpGet:
             path: /healthz
             port: {{ .Values.twhinSidecar.port }}
           initialDelaySeconds: 5
-          periodSeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 12
       volumes:
       - name: uploads
