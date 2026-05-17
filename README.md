@@ -342,7 +342,7 @@ Unlike naive multi-agent setups, DeepMiro does NOT feed each agent the rolling c
 | Simulation (110 Twitter + 26 Reddit actions) | ~4 min |
 | **Total pipeline** | **~7 min (quick) / ~12 min (standard, 80 agents)** |
 
-The biggest win is the recommendation system: TWHIN-BERT embeddings are computed once per user at setup, then only new posts are embedded incrementally each round. Cosine similarity via numpy replaces what was previously a full LLM inference call — orders of magnitude faster per round. See [BENCHMARKS.md](./BENCHMARKS.md) for the full methodology, hardware spec, and raw numbers.
+The biggest win is the recommendation system: TWHIN-BERT embeddings are computed once per user at setup, then only new posts are embedded incrementally each round. Cosine similarity via numpy replaces what was previously a full LLM inference call — orders of magnitude faster per round.
 
 ## Monorepo Structure
 
