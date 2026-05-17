@@ -23,7 +23,7 @@ from flask import Flask, request
 
 from flask_cors import CORS
 
-from .config import Config
+from .config import Config, ConfigError
 from .utils.logger import get_logger, setup_logger
 
 
@@ -123,6 +123,17 @@ def create_app(config_class=Config):
 
     app.config.from_object(config_class)
 
+    # Validate required configuration before doing anything else. Fail loud
+    # at startup so misconfigured deployments don't silently break later.
+    config_errors = config_class.validate()
+    if config_errors:
+        # Logger isn't set up yet at this point; print directly.
+        for err in config_errors:
+            print(f"[config] FATAL: {err}", flush=True)
+        raise ConfigError(
+            f"{len(config_errors)} required configuration value(s) missing — see logs above"
+        )
+
     # Disable ASCII escaping so Chinese / emoji characters show as-is.
     if hasattr(app, 'json') and hasattr(app.json, 'ensure_ascii'):
         app.json.ensure_ascii = False
@@ -158,6 +169,9 @@ def create_app(config_class=Config):
         logger.info("=" * 50)
         logger.info("DeepMiro Backend starting...")
         logger.info("=" * 50)
+
+        for warning_msg in config_class.warnings():
+            logger.warning("[config] %s", warning_msg)
 
     # CORS.
     CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -196,6 +210,38 @@ def create_app(config_class=Config):
         resp_logger = get_logger('mirofish.request')
         resp_logger.debug(f"Response: {response.status_code}")
         return response
+
+    # Catch-all error handler — log the full traceback server-side, return
+    # a sanitized JSON body to the client. Replaces the repeated
+    # `"traceback": traceback.format_exc()` pattern that used to leak
+    # internal stack frames in 500 responses.
+    import traceback as _traceback
+    import uuid as _uuid
+    from werkzeug.exceptions import HTTPException
+    from flask import jsonify
+
+    error_logger = get_logger('mirofish.error')
+
+    @app.errorhandler(Exception)
+    def _handle_uncaught(exc):
+        # Let Flask handle HTTP errors (404, 405, etc.) with its defaults.
+        if isinstance(exc, HTTPException):
+            return exc
+
+        request_id = _uuid.uuid4().hex[:12]
+        error_logger.error(
+            "[%s] Uncaught exception on %s %s: %s\n%s",
+            request_id,
+            request.method,
+            request.path,
+            exc,
+            _traceback.format_exc(),
+        )
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error',
+            'request_id': request_id,
+        }), 500
 
     # Blueprint registration.
     from .api import documents_bp, graph_bp, report_bp, simulation_bp

@@ -226,7 +226,11 @@ def _get_boost_config():
         return None, ""
 
     boost_base_url = Config.LLM_BOOST_BASE_URL or Config.LLM_BASE_URL
-    _boost_client = OpenAI(api_key=boost_api_key, base_url=boost_base_url)
+    _boost_client = OpenAI(
+        api_key=boost_api_key,
+        base_url=boost_base_url,
+        timeout=Config.LLM_TIMEOUT_SECONDS,
+    )
     _boost_model = boost_model
     logger.info(f"Boost LLM configured: model={boost_model}")
     return _boost_client, _boost_model
@@ -263,7 +267,8 @@ class LLMClient:
 
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=Config.LLM_TIMEOUT_SECONDS,
         )
 
     def chat(

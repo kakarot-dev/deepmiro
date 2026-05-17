@@ -98,7 +98,7 @@ Generic MCP install for clients that aren't Claude Desktop, Claude Code, or Clau
 
 | Client | Install |
 |--------|---------|
-| **OpenAI Codex** | `codex plugin install kakarot-dev/deepmiro` |
+| **OpenAI Codex (CLI)** | Add to `~/.codex/config.toml` under `[mcp_servers.deepmiro]`: `command = "npx"`, `args = ["-y", "deepmiro-mcp"]`, `env = { DEEPMIRO_API_KEY = "dm_xxx" }` |
 | **ChatGPT Desktop** | Settings → MCP Servers → Add → `npx deepmiro-mcp` with env `DEEPMIRO_API_KEY` |
 | **Cursor / Windsurf** | Settings → MCP → Add → `npx deepmiro-mcp` with env `DEEPMIRO_API_KEY` |
 | **VS Code (Copilot)** | Add to `.vscode/mcp.json`: `"deepmiro": {"command": "npx", "args": ["-y", "deepmiro-mcp"], "env": {"DEEPMIRO_API_KEY": "dm_xxx"}}` |
@@ -171,7 +171,7 @@ First startup takes ~2 minutes (TWHIN-BERT model warm-up). Check readiness:
 
 ```bash
 docker compose logs -f twhin-sidecar   # wait for "TWHIN-BERT ready"
-docker compose logs backend            # wait for "MiroFish Backend 启动完成"
+docker compose logs backend            # wait for "DeepMiro Backend ready"
 ```
 
 To build from source instead of pulling images:
@@ -236,7 +236,7 @@ MCP ships with no auth by default — set `MCP_API_KEY` in `.env` before exposin
 
 ## MCP Server
 
-DeepMiro is an [MCP](https://modelcontextprotocol.io) server. MCP is the universal standard adopted by Claude, ChatGPT, Gemini, Cursor, VS Code, and every major AI client — one server, works everywhere.
+DeepMiro is an [MCP](https://modelcontextprotocol.io) server. MCP is natively supported by Claude (Desktop, Code, Cowork) and Cursor, with growing support across ChatGPT Desktop, VS Code (Copilot), Windsurf, and OpenAI Codex CLI — one server, works in every MCP-enabled client.
 
 ```bash
 npx deepmiro-mcp
@@ -342,7 +342,7 @@ Unlike naive multi-agent setups, DeepMiro does NOT feed each agent the rolling c
 | Simulation (110 Twitter + 26 Reddit actions) | ~4 min |
 | **Total pipeline** | **~7 min (quick) / ~12 min (standard, 80 agents)** |
 
-The biggest win is the recommendation system: TWHIN-BERT embeddings are computed once per user at setup, then only new posts are embedded incrementally each round. Cosine similarity via numpy replaces what was previously a full LLM inference call — **13,000x faster per round**.
+The biggest win is the recommendation system: TWHIN-BERT embeddings are computed once per user at setup, then only new posts are embedded incrementally each round. Cosine similarity via numpy replaces what was previously a full LLM inference call — orders of magnitude faster per round. See [BENCHMARKS.md](./BENCHMARKS.md) for the full methodology, hardware spec, and raw numbers.
 
 ## Monorepo Structure
 
@@ -365,7 +365,7 @@ deepmiro/
 ├── helm-chart/          # Kubernetes (k3s) deployment
 ├── docker/              # Dockerfiles + compose
 ├── docs/                # Landing page
-└── locales/             # i18n (en, zh)
+└── locales/             # English translation strings
 ```
 
 ## Use Cases
@@ -385,7 +385,26 @@ DeepMiro is a fork of [MiroFish](https://github.com/666ghj/MiroFish), originally
 
 ## License
 
-[AGPL-3.0](./LICENSE)
+DeepMiro is licensed under [AGPL-3.0](./LICENSE), inherited from its
+upstream [MiroFish](https://github.com/666ghj/MiroFish). AGPL is a
+strong copyleft license — read it before adopting at scale.
+
+### What AGPL-3.0 means for you
+
+| You are... | Your obligation |
+|---|---|
+| **A user of [deepmiro.org](https://deepmiro.org)** (hosted SaaS) | None. You're a client of the service; AGPL does not apply to you. |
+| **Self-hosting for internal use** (no external users) | None. Run, fork, and modify freely. |
+| **Self-hosting and exposing DeepMiro to external users over a network** (your own SaaS, customer-facing tool, public API) | You must offer the complete corresponding source code of any modified version to those users, under AGPL-3.0. |
+| **Embedding DeepMiro in a commercial product you distribute** | The combined work must also be licensed under AGPL-3.0. |
+
+If your use case requires a license without the network-distribution
+share-back requirement (typical for embedding in a closed-source product
+or running a competing hosted offering), reach out at
+**joel@deepmiro.org** to discuss a commercial license. The hosted
+deepmiro.org service is also explicitly designed for commercial users
+who want the engine without the AGPL obligation — use the API keys, skip
+the legal work.
 
 ---
 

@@ -24,6 +24,46 @@ from .ner_extractor import NERExtractor
 logger = logging.getLogger("mirofish.surrealdb_storage")
 
 
+# Allowlist of column names that may appear as keys in the dicts passed to
+# update_simulation() / upsert_simulation(). Values are still parameterized
+# via $placeholders, but the column NAMES are interpolated via f-strings —
+# an allowlist prevents an upstream regression from turning that into a
+# SurrealQL injection vector. Keep this list in sync with the `simulation`
+# table schema in surrealdb_schema.py.
+SIMULATION_COLUMN_ALLOWLIST: frozenset[str] = frozenset({
+    "simulation_id", "user_id", "name", "description",
+    "state", "previous_state", "status",
+    "graph_id", "document_id", "scenario_text",
+    "config_json", "entity_types", "config",
+    "started_at", "completed_at", "updated_at", "created_at",
+    "error", "error_at", "cancel_reason",
+    "process_pid", "watchdog_owner", "heartbeat_at",
+    "twitter_running", "reddit_running",
+    "enable_twitter", "enable_reddit",
+    "current_round", "total_rounds",
+    "simulated_hours", "total_simulation_hours",
+    "twitter_current_round", "reddit_current_round",
+    "twitter_simulated_hours", "reddit_simulated_hours",
+    "actions_count", "interview_history",
+    "prepare_status", "prepare_total",
+    "agents_count", "ontology_id",
+    "prepared_at", "ready_at",
+    "watchdog_lease_until", "scenario_hub",
+    "is_quick", "fast_mode",
+})
+
+
+def _validate_column(table: str, key: str) -> None:
+    """Raise if `key` isn't in the allowlist for `table`. Defense-in-depth
+    against SurrealQL injection via dict-key interpolation."""
+    if key not in SIMULATION_COLUMN_ALLOWLIST:
+        raise ValueError(
+            f"Refusing to write unknown column {key!r} to table {table!r}. "
+            f"Add it to SIMULATION_COLUMN_ALLOWLIST in surrealdb_backend.py "
+            f"if this is a legitimate new field."
+        )
+
+
 class SurrealDBStorage(GraphStorage):
     """SurrealDB implementation of the GraphStorage interface (sync)."""
 
@@ -70,7 +110,14 @@ class SurrealDBStorage(GraphStorage):
 
     def connect(self) -> None:
         """Establish SurrealDB connection, authenticate, select ns/db."""
-        self._db = Surreal(self._url)
+        # The Surreal SDK's `timeout` kwarg landed in v1.x but the
+        # signature has varied across releases. We pass it conditionally
+        # so the engine still boots on older SDK builds. Defense in depth:
+        # _with_retry() also caps total attempt time.
+        try:
+            self._db = Surreal(self._url, timeout=Config.SURREAL_TIMEOUT_SECONDS)
+        except TypeError:
+            self._db = Surreal(self._url)
         # SDK v1.0.8 uses __enter__() to connect; newer versions use connect()
         try:
             self._db.connect()
@@ -971,6 +1018,7 @@ class SurrealDBStorage(GraphStorage):
         set_clauses = []
         params: Dict[str, Any] = {"sid": simulation_id}
         for key, value in updates.items():
+            _validate_column("simulation", key)
             if value == "time::now()":
                 set_clauses.append(f"{key} = time::now()")
             else:
@@ -992,6 +1040,7 @@ class SurrealDBStorage(GraphStorage):
         for key, value in sim_data.items():
             if key in SKIP_FIELDS:
                 continue
+            _validate_column("simulation", key)
             if hasattr(value, 'isoformat'):
                 value = str(value)
             if isinstance(value, set):

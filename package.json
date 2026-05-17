@@ -1,6 +1,6 @@
 {
   "name": "deepmiro",
-  "version": "0.8.0",
+  "version": "1.7.0",
   "description": "DeepMiro — a swarm intelligence engine that rehearses the future",
   "scripts": {
     "setup:engine": "cd engine && uv sync",

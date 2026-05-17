@@ -140,9 +140,16 @@ export function registerSimulationData(server: McpServer, client: MirofishClient
             break;
 
           case "actions": {
+            // When client-side filters are active we need to over-fetch so
+            // post-filter pages still cover the requested window. When no
+            // filter is active, request exactly what we need.
+            const hasFilters = Boolean(args.agent_name || args.action_type);
+            const fetchLimit = hasFilters
+              ? Math.min((limit + offset) * 4, 1000)
+              : limit + offset;
             const resp = await client.getSimulationActions(args.simulation_id, {
               platform: args.platform,
-              limit: 500, // fetch more, paginate client-side
+              limit: fetchLimit,
             });
             let items = resp.actions as any[];
             if (args.agent_name) {

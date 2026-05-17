@@ -119,7 +119,7 @@ async function startHttpTransport(config: MirofishConfig, authProvider?: AuthPro
   });
 
   const httpServer = app.listen(config.httpPort, () => {
-    console.log(`deepmiro: HTTP transport listening on port ${config.httpPort}`);
+    process.stderr.write(`deepmiro: HTTP transport listening on port ${config.httpPort}\n`);
   });
 
   // Graceful shutdown (MEDIUM FIX)

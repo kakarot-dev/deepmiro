@@ -12,7 +12,7 @@ export function createMcpServer(config: MirofishConfig): {
 } {
   const server = new McpServer({
     name: "deepmiro",
-    version: "0.1.0",
+    version: "1.7.0",
   }, {
     capabilities: {
       resources: {},
@@ -70,11 +70,7 @@ export function createMcpServer(config: MirofishConfig): {
         const sim = simulations[0];
         const simulationId = sim.simulation_id;
 
-        let report = null;
-        try {
-          const r = await (client as any).get(`/api/report/by-simulation/${simulationId}`);
-          report = r.data;
-        } catch { /* no report yet */ }
+        const report = await client.getCachedReport(simulationId).catch(() => null);
 
         return {
           contents: [{

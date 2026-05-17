@@ -5,6 +5,22 @@ Returns the configured GraphStorage implementation based on the
 GRAPH_BACKEND environment variable:
 
   - "surrealdb" (default) -> SurrealDBStorage
+
+# Why this seam exists
+
+SurrealDB is currently the only backend, so the abstract `GraphStorage`
+interface in `base.py` plus this factory might look like premature
+abstraction. They are kept deliberately:
+
+1. We forked from MiroFish, which used Zep Cloud. The seam let us swap
+   backends without rewriting every call site, and the Zep adapter
+   still exists as historical reference.
+2. The hosted tier (deepmiro-hosted) may run with a different backend
+   for multi-tenant isolation in the future. Keeping the interface
+   means that migration is additive, not a rewrite.
+
+If we're still single-backend at the next refactor, inline
+SurrealDBStorage directly.
 """
 
 import os

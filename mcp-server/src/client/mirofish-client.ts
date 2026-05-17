@@ -284,6 +284,23 @@ export class MirofishClient {
   // Report
   // ------------------------------------------------------------------
 
+  /**
+   * Read a cached report without triggering generation. Returns null when
+   * no report has been generated yet. Used by the prediction:// resource
+   * handler, which must not block on generation.
+   */
+  async getCachedReport(simulationId: string): Promise<Report | null> {
+    try {
+      const resp = await this.http.get<MirofishApiResponse<Report>>(
+        `/api/report/by-simulation/${simulationId}`,
+      );
+      return resp.data?.data ?? null;
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 404) return null;
+      throw err;
+    }
+  }
+
   async getOrGenerateReport(
     simulationId: string,
     forceRegenerate = false,

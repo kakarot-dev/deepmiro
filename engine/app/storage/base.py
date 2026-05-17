@@ -3,7 +3,14 @@ GraphStorage -- abstract interface for graph storage backends.
 
 Implementations:
   - SurrealDBStorage  (surrealdb_backend.py)
-  - ZepStorage        (zep_backend.py -- thin wrapper around original Zep calls)
+  - ZepStorage        (legacy fallback -- removed in v1.7.0, kept as a
+                       reference in older git history)
+
+The interface looks over-engineered for a single backend, but it's load-
+bearing: we forked from MiroFish (Zep Cloud) and migrated to SurrealDB.
+The seam made that migration additive instead of a full rewrite, and the
+hosted tier may need a different backend for multi-tenant isolation. See
+`factory.py` for the rationale to keep this in place.
 """
 
 from abc import ABC, abstractmethod

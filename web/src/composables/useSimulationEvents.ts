@@ -406,10 +406,18 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
     });
   }
 
+  // Monotonically increasing token used to discard results from a stale
+  // bootstrap when simId changes mid-flight. Without this, navigating
+  // rapidly between simulations (A → B → A) can let B's awaited results
+  // land on top of the second A's state.
+  let bootstrapToken = 0;
+
   async function bootstrap(simId: string) {
+    const myToken = ++bootstrapToken;
     resetAll();
     try {
       const snap = await getStatus(simId);
+      if (myToken !== bootstrapToken) return;
       applySnapshot(snap);
       const hydratablePhases: SimState[] = [
         "GENERATING_PROFILES",
@@ -422,6 +430,7 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
       ];
       if (hydratablePhases.includes(snap.state)) {
         await hydrateAgents(simId);
+        if (myToken !== bootstrapToken) return;
         if (snap.state === "GENERATING_PROFILES") {
           startProfilePoll(simId);
         }
@@ -435,6 +444,7 @@ export function useSimulationEvents(simIdRef: Ref<string>) {
       }
       openStream(simId);
     } catch (err: any) {
+      if (myToken !== bootstrapToken) return;
       error.value = err?.message ?? "Failed to load simulation";
     }
   }

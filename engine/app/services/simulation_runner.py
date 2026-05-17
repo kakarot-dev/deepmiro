@@ -76,7 +76,12 @@ class SimulationRunner:
         os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
     )
 
-    # Live process handles (keyed by simulation_id)
+    # Live process handles (keyed by simulation_id). All mutations are
+    # guarded by `_state_lock` — concurrent Flask request handlers, the
+    # monitor threads, and the LifecycleWatchdog all touch these dicts.
+    # RLock so re-entrant calls (e.g. cleanup_all_simulations → _terminate
+    # _process_group) don't self-deadlock.
+    _state_lock: threading.RLock = threading.RLock()
     _processes: dict[str, subprocess.Popen] = {}
     _monitor_threads: dict[str, threading.Thread] = {}
     _stdout_files: dict[str, Any] = {}
@@ -144,16 +149,19 @@ class SimulationRunner:
                 raise ValueError("enable_graph_memory_update requires graph_id")
             try:
                 GraphMemoryManager.create_updater(simulation_id, graph_id)
-                cls._graph_memory_enabled[simulation_id] = True
+                with cls._state_lock:
+                    cls._graph_memory_enabled[simulation_id] = True
                 logger.info(
                     "Graph memory updater enabled: sim=%s graph=%s",
                     simulation_id, graph_id,
                 )
             except Exception as exc:
                 logger.error("Failed to create graph memory updater: %s", exc)
-                cls._graph_memory_enabled[simulation_id] = False
+                with cls._state_lock:
+                    cls._graph_memory_enabled[simulation_id] = False
         else:
-            cls._graph_memory_enabled[simulation_id] = False
+            with cls._state_lock:
+                cls._graph_memory_enabled[simulation_id] = False
 
         # Pick the right script
         if platform == "twitter":
@@ -201,7 +209,8 @@ class SimulationRunner:
             raise
 
         store.update(simulation_id, process_pid=process.pid)
-        cls._processes[simulation_id] = process
+        with cls._state_lock:
+            cls._processes[simulation_id] = process
 
         current_locale = get_locale()
         monitor = threading.Thread(
@@ -211,7 +220,8 @@ class SimulationRunner:
             name=f"monitor-{simulation_id}",
         )
         monitor.start()
-        cls._monitor_threads[simulation_id] = monitor
+        with cls._state_lock:
+            cls._monitor_threads[simulation_id] = monitor
 
         logger.info(
             "Simulation started: sim=%s pid=%d platform=%s",
@@ -250,18 +260,26 @@ class SimulationRunner:
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUNBUFFERED"] = "1"
 
-        process = subprocess.Popen(
-            cmd,
-            cwd=sim_dir,
-            stdout=main_log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-            env=env,
-            start_new_session=True,  # new process group
-        )
-        cls._stdout_files[simulation_id] = main_log_file
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=sim_dir,
+                stdout=main_log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                env=env,
+                start_new_session=True,  # new process group
+            )
+        except Exception:
+            # Popen failed — close the log file we just opened so we don't
+            # leak the FD on the spawn-failure path.
+            main_log_file.close()
+            raise
+
+        with cls._state_lock:
+            cls._stdout_files[simulation_id] = main_log_file
         return process
 
     @classmethod
@@ -490,14 +508,14 @@ class SimulationRunner:
 
         finally:
             cls._cleanup_graph_updater(simulation_id)
-            cls._processes.pop(simulation_id, None)
-            # Close the subprocess log file handle
-            if simulation_id in cls._stdout_files:
+            with cls._state_lock:
+                cls._processes.pop(simulation_id, None)
+                stdout_handle = cls._stdout_files.pop(simulation_id, None)
+            if stdout_handle is not None:
                 try:
-                    cls._stdout_files[simulation_id].close()
+                    stdout_handle.close()
                 except Exception:
                     pass
-                cls._stdout_files.pop(simulation_id, None)
 
     @classmethod
     def _tail_actions_log(
@@ -793,8 +811,10 @@ class SimulationRunner:
             return
         cls._cleanup_done = True
 
-        has_processes = bool(cls._processes)
-        has_updaters = bool(cls._graph_memory_enabled)
+        with cls._state_lock:
+            has_processes = bool(cls._processes)
+            has_updaters = bool(cls._graph_memory_enabled)
+            snapshot_items = list(cls._processes.items())
         if not has_processes and not has_updaters:
             return
 
@@ -805,9 +825,10 @@ class SimulationRunner:
             GraphMemoryManager.stop_all()
         except Exception as exc:
             logger.error("Failed to stop graph memory updaters: %s", exc)
-        cls._graph_memory_enabled.clear()
+        with cls._state_lock:
+            cls._graph_memory_enabled.clear()
 
-        for simulation_id, process in list(cls._processes.items()):
+        for simulation_id, process in snapshot_items:
             try:
                 if process.poll() is None:
                     logger.info(
@@ -842,15 +863,16 @@ class SimulationRunner:
                 logger.error("Cleanup failure for %s: %s", simulation_id, e)
 
         # Close any leftover file handles
-        for sim_id, handle in list(cls._stdout_files.items()):
+        with cls._state_lock:
+            leftover_handles = list(cls._stdout_files.items())
+            cls._stdout_files.clear()
+            cls._processes.clear()
+        for _sim_id, handle in leftover_handles:
             try:
                 if handle:
                     handle.close()
             except Exception:
                 pass
-        cls._stdout_files.clear()
-
-        cls._processes.clear()
         logger.info("Simulation cleanup complete.")
 
     @classmethod

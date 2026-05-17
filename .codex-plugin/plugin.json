@@ -1,6 +1,6 @@
 {
   "name": "deepmiro",
-  "version": "0.1.0",
+  "version": "1.7.0",
   "description": "Swarm prediction engine — simulate hundreds of AI agents to predict how communities react to events, policies, and announcements.",
   "author": {
     "name": "kakarot-dev",
