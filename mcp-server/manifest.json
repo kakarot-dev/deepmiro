@@ -24,6 +24,13 @@
       "description": "Leave as default unless self-hosting (e.g. http://localhost:5001)",
       "default": "https://api.deepmiro.org",
       "required": false
+    },
+    "app_url": {
+      "type": "string",
+      "title": "DeepMiro Dashboard URL",
+      "description": "Browser-facing SPA used for view-live links in tool responses. Leave as default unless self-hosting.",
+      "default": "https://app.deepmiro.org",
+      "required": false
     }
   },
   "server": {
@@ -35,7 +42,8 @@
       "env": {
         "TRANSPORT": "stdio",
         "DEEPMIRO_API_KEY": "${user_config.api_key}",
-        "MIROFISH_URL": "${user_config.server_url}"
+        "MIROFISH_URL": "${user_config.server_url}",
+        "DEEPMIRO_APP_URL": "${user_config.app_url}"
       }
     }
   }

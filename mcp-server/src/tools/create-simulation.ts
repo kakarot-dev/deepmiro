@@ -45,7 +45,9 @@ export function registerCreateSimulation(
         "Add specific people, companies, organizations, and opposing viewpoints. Show the enriched prompt " +
         "to the user for confirmation first.\n\n" +
         "If the user provides a document (PDF, MD, TXT), call upload_document first and pass the returned document_id.\n\n" +
-        "Returns immediately with simulation_id. Call simulation_status to wait for completion — " +
+        "Returns immediately with simulation_id AND dashboard_url. " +
+        "ALWAYS show the dashboard_url to the user so they can watch the simulation live in their " +
+        "browser (e.g. 'Watch it live: <url>'). Then call simulation_status to wait for completion — " +
         "each call blocks up to 50s for the next state change, so you only need a few. " +
         "When status returns state=COMPLETED, the full report is included inline.",
       inputSchema,
@@ -61,6 +63,7 @@ export function registerCreateSimulation(
           rounds: args.rounds,
           platform: args.platform,
         });
+        const dashboardUrl = client.dashboardUrl(simulation_id);
         return {
           content: [
             {
@@ -68,10 +71,14 @@ export function registerCreateSimulation(
               text: JSON.stringify(
                 {
                   simulation_id,
+                  dashboard_url: dashboardUrl,
                   status: "running",
                   message:
                     "Prediction started. Call simulation_status to wait for completion " +
                     "(long-polls; returns report when done).",
+                  display_instructions:
+                    "Tell the user the simulation has started and surface dashboard_url " +
+                    "so they can watch it live in their browser. Requires sign-in to deepmiro.org.",
                 },
                 null,
                 2,

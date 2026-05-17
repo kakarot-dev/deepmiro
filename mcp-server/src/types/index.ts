@@ -7,6 +7,10 @@
 
 export interface MirofishConfig {
   mirofishUrl: string;
+  /** SPA dashboard origin. Used to build `${appUrl}/sim/:simId` links
+   * returned in tool responses so the user can open the simulation in
+   * their browser. Defaults to https://app.deepmiro.org. */
+  appUrl: string;
   llmApiKey: string;
   deepmiroApiKey?: string;
   mcpApiKey?: string;
@@ -169,6 +173,9 @@ export interface LifecycleEvent {
 
 export interface RichSimulationStatus {
   simulation_id: string;
+  /** Dashboard URL (`${appUrl}/sim/:simId`) — surface this to the user
+   * so they can open the simulation in a browser. Requires sign-in. */
+  dashboard_url: string;
   state: SimState;
   phase: string;
   progress_percent: number;

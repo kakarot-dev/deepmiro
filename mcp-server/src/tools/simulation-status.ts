@@ -57,6 +57,9 @@ export function registerSimulationStatus(
         "— blocks up to 50s waiting for a state change (phase transition, new round, new " +
         "actions, completion). When state=COMPLETED, includes the full prediction report " +
         "inline.\n\n" +
+        "Response includes a dashboard_url — ALWAYS surface it to the user (e.g. " +
+        "'View live: <url>') so they can open the simulation in their browser. Requires " +
+        "sign-in to deepmiro.org.\n\n" +
         "Lifecycle: CREATED → GRAPH_BUILDING → GENERATING_PROFILES → READY → SIMULATING → " +
         "COMPLETED/FAILED/CANCELLED/INTERRUPTED.",
       inputSchema,
@@ -189,6 +192,7 @@ async function formatRichStatus(
 
   const rich: RichSimulationStatus = {
     simulation_id: fresh.simulation_id,
+    dashboard_url: client.dashboardUrl(fresh.simulation_id),
     state: fresh.state,
     phase: fresh.phase ?? fresh.state.toLowerCase(),
     progress_percent: fresh.progress_percent ?? 0,

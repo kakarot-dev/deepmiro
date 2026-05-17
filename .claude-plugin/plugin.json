@@ -15,6 +15,7 @@
       "args": ["-y", "deepmiro-mcp"],
       "env": {
         "DEEPMIRO_API_KEY": "${DEEPMIRO_API_KEY}",
+        "DEEPMIRO_APP_URL": "${DEEPMIRO_APP_URL}",
         "DEEPMIRO_VIA_PLUGIN": "1"
       }
     }

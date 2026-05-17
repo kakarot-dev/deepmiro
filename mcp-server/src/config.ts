@@ -19,6 +19,13 @@ const envSchema = z.object({
     emptyStringAsUndefined,
     z.string().url().default("https://api.deepmiro.org"),
   ),
+  // SPA dashboard URL — used to build view-in-browser links returned
+  // alongside simulation responses. Self-hosters can point this at
+  // their own front-end domain.
+  DEEPMIRO_APP_URL: z.preprocess(
+    emptyStringAsUndefined,
+    z.string().url().default("https://app.deepmiro.org"),
+  ),
   DEEPMIRO_API_KEY: z.preprocess(emptyStringAsUndefined, z.string().optional()),
   LLM_API_KEY: z.preprocess(emptyStringAsUndefined, z.string().optional()),
   MCP_API_KEY: z.preprocess(emptyStringAsUndefined, z.string().optional()),
@@ -33,6 +40,7 @@ export function loadConfig(): MirofishConfig {
   const parsed = envSchema.parse(process.env);
   return {
     mirofishUrl: parsed.MIROFISH_URL,
+    appUrl: parsed.DEEPMIRO_APP_URL,
     llmApiKey: parsed.LLM_API_KEY ?? "",
     deepmiroApiKey: parsed.DEEPMIRO_API_KEY,
     mcpApiKey: parsed.MCP_API_KEY,

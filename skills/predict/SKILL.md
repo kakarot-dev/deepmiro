@@ -127,12 +127,12 @@ CronCreate(
 )
 ```
 
-Then tell the user something short:
-> "Started your prediction. I'll check on it every couple minutes and update you as the personas start reacting."
+Then tell the user something short, and **always surface the `dashboard_url` from the tool response** so they can watch live:
+> "Started your prediction. You can watch it live in your browser: <dashboard_url>. I'll also check in every couple minutes and narrate what the personas are doing."
 
 Do NOT:
 - Mention "graph building", "generating profiles", "phases", "pipeline", "personas are built", or any internal steps
-- Show simulation IDs like `sim_xxxxx` or `pending_proj_xxxxx` to the user (keep them internal — use them when calling tools, never print)
+- Show simulation IDs like `sim_xxxxx` or `pending_proj_xxxxx` to the user (the dashboard_url already embeds the ID — share the URL, not the raw ID)
 - Dump percentages, round counts like "Round 0/72", or action counters
 - Pre-describe what the report will contain
 
@@ -187,8 +187,11 @@ If over 15 minutes: "Still running — I'll let you know when it's done."
 
 Call `get_report`. Present the full analysis to the user.
 
+Always end the report response by reminding them of the dashboard URL (from the most recent `simulation_status` response's `dashboard_url`):
+> "You can also explore the full simulation — agents, posts, interactions — in your browser: <dashboard_url>"
+
 Then offer next steps:
-> "Simulation complete! You can:
+> "You can:
 > - **Interview a persona** — 'ask Li Wei why he liked that post'
 > - **Run another scenario** — 'predict [new scenario]'
 > - **Search past sims** — 'show my past predictions'"

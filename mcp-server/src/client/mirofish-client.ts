@@ -66,6 +66,13 @@ export class MirofishClient {
     this.userContext = ctx;
   }
 
+  /** Build a dashboard URL for a simulation. Surface this to the user
+   * in tool responses so they can view the run in a browser. */
+  dashboardUrl(simulationId: string): string {
+    const base = this.config.appUrl.replace(/\/+$/, "");
+    return `${base}/sim/${simulationId}`;
+  }
+
   // ------------------------------------------------------------------
   // Health
   // ------------------------------------------------------------------
