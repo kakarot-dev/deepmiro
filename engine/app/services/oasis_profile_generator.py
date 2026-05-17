@@ -705,9 +705,20 @@ Entity attributes: {attrs_str}
 Context information:
 {context_str}
 
+VOICE DIRECTIVE — read before writing any field:
+Most real social media accounts are NOT formal. Default to specific,
+opinionated, often informal voices that match how the entity ACTUALLY
+posts. Reserve formal/authoritative/professional register ONLY for
+entities that are genuinely formal in real life (central banks,
+courts, embassies, peer-reviewed journals). For everyone else —
+startups, journalists, customers, communities, pundits, brand
+accounts, executives — formal is the WRONG default and produces
+press-release output.
+
 Generate JSON with the following fields:
 
-1. bio: Social media bio, 200 characters
+1. bio: Social media bio, 200 characters, in this person's own voice
+— match the register from speaking_style. Not a CV blurb.
 2. persona: Detailed persona description (2000 characters of plain text), \
 including:
    - Basic information (age, profession, education background, location)
@@ -743,11 +754,17 @@ Tucker Carlson: ["The permanent Washington class despises ordinary Americans.", 
 is committing generational crimes.", "Housing is a human right, not an asset \
 class."]
 11. verbal_tics: Array of 3-5 actual phrases or sentence-openers this person \
-uses repeatedly. Use the literal wording they'd use. Examples for Tucker Carlson: \
-["Let's pause for a moment...", "Permanent Washington wants you to believe...", \
-"This is not even controversial, but...", "Ask yourself this."] Examples for AOC: \
+uses repeatedly. Use the literal wording they'd type into a compose box. \
+Examples for Tucker Carlson: ["Let's pause for a moment...", \
+"Permanent Washington wants you to believe...", "This is not even \
+controversial, but...", "Ask yourself this."] Examples for AOC: \
 ["Let me be very clear:", "This is a moral failure.", "We are being gaslit.", \
 "The question isn't can we afford it, it's..."]
+AVOID these failure modes:
+- Marketing taglines or About-page slogans ("Building X", "Empowering Y").
+- "As a [role/title]..." openers — that's bio voice, not post voice.
+- Press-release verbs as sentence openers ("announces", "celebrates", \
+"welcomes", "is committed to", "is excited to").
 12. never_say: Array of 3-5 sentences this person would NEVER utter because \
 they are off-brand and contrary to their ideology. Format each as a LITERAL \
 sentence the person would refuse to say. Examples for Tucker Carlson: \
@@ -757,27 +774,55 @@ Examples for AOC: ["The free market will solve climate change.", \
 "We should cut taxes on the wealthy.", "Corporations deserve more freedom."] \
 These are negative examples — they MUST sound like real statements the person \
 would find offensive or absurd.
+AVOID these failure modes:
+- Neutral facts ("Cash is more private than digital payments") — even \
+allies might post these; they aren't off-brand.
+- Abstract policy negations ("Privacy is unimportant") — too vague.
+- Inverted slogans (just flipping a verbal_tic into its negative).
+A good never_say is a CONCRETE QUOTE that would violate the person's \
+commercial, political, or professional identity if they posted it.
 13. speaking_style: 1-2 sentences describing register, vocabulary, and \
 rhetorical habits. Example for Tucker Carlson: "Folksy populist register with \
 dramatic pauses and rhetorical questions. Uses 'folks' and 'permanent \
 Washington' as signature markers. Frames every story as elite overreach against \
 ordinary people."
+AVOID these failure modes:
+- The template "Formal/Professional/Authoritative [X] voice with [adjective]" \
+— that pattern is the documented failure mode this prompt exists to prevent.
+- Marketing-deck phrases: "balanced and thoughtful", "uses inclusive \
+language", "emphasizes trust and transparency".
+- Generic register descriptors with no specifics. If you can't name a \
+literal mannerism, the description is too vague.
 
-14. role: ONE lowercase token from this fixed enum describing what KIND \
-of participant this persona is in the scenario. Required.
-    public_figure  — a known individual (CEO, politician, celeb, pundit)
-    organization   — a company / brand / institution acting as itself
-    regulator      — government / oversight body (NHTSA, FCC, FTC, DOJ)
-    advocate       — activist, nonprofit, civil society (ACLU, EFF, Nader)
-    journalist     — reporter, columnist, tech creator, podcaster
-    investor       — VC, hedge fund, analyst, short-seller, asset manager
-    competitor     — same-market rival of the scenario subject
-    customer       — end-user, consumer voice, trade group, power user
-    community      — subreddit, fediverse, online community
-    academic       — researcher, scientist, professor
-    partner        — collaborator with the scenario subject
-    insider        — current or former employee
-    other          — fallback only
+14. role: ONE lowercase token from this fixed enum. Each role has a default \
+TONAL HINT — use it when picking the voice for this persona. Required.
+    public_figure  — known individual (CEO, politician, celeb, pundit).
+                     Sound like them, not "professional executive register".
+    organization   — company / brand / institution acting as itself. Match
+                     how this brand actually tweets — usually informal,
+                     not their press releases.
+    regulator      — government / oversight body. Dry, specific, citation-
+                     heavy. Never explains, never previews, never softens.
+    advocate       — activist, nonprofit, civil society. Partisan, urgent,
+                     no balanced framing.
+    journalist     — reporter, columnist, podcaster. Breaking-news cadence,
+                     names sources, snarky in replies.
+    investor       — VC, hedge fund, analyst. Terse, numbers-first, calls
+                     out cope. Reposts and quote-tweets more than posts.
+    competitor     — same-market rival. Counter-positions own product
+                     without naming the subject. Selective subtweet.
+    customer       — end-user, consumer voice. Informal, complains in
+                     specifics. Never sounds like a focus group.
+    community      — subreddit, fediverse, online community. Inside jokes,
+                     meta-jokes, gallows humor about their own community.
+    academic       — researcher, professor. Citations + understatement.
+                     Precision over warmth. "Note that...", "evidence
+                     suggests...".
+    partner        — collaborator with the subject. Supportive but
+                     pragmatic, not glowing.
+    insider        — current or former employee. Knows details outsiders
+                     don't; understates, never grandstands.
+    other          — fallback only. Match the entity's real-world voice.
 
 15. stance: ONE lowercase token from this enum describing how the persona \
 feels about the scenario's central subject. Required.
@@ -823,9 +868,23 @@ Entity attributes: {attrs_str}
 Context information:
 {context_str}
 
+VOICE DIRECTIVE — read before writing any field:
+Most real institutional social media accounts are NOT formal. Default
+to specific, opinionated voices that match how this institution
+ACTUALLY posts. Reserve formal/authoritative/professional register
+ONLY for entities that are genuinely formal in real life (central
+banks, courts, embassies, peer-reviewed journals). For everyone else
+— consumer brands, news outlets, advocacy groups, community accounts,
+trade bodies — formal is the WRONG default and produces press-release
+output. Many real brand accounts are snarky, self-deprecating, or
+technical; many real news accounts are blunt; many real community
+accounts are full of inside jokes.
+
 Generate JSON with the following fields:
 
-1. bio: Official account bio, 200 characters, professional and appropriate
+1. bio: Account bio, 200 characters. Match the institution's ACTUAL
+bio register — not a corporate-comms default. If their real bio is a
+one-liner or a joke, write a one-liner or joke. Don't write a brochure.
 2. persona: Detailed account profile description (2000 characters of plain text), \
 including:
    - Institutional basic information (official name, nature, founding background, \
@@ -863,29 +922,80 @@ American prosperity.", "Free markets are morally superior to central planning.",
 ["Civil liberties are non-negotiable and universal.", "State surveillance \
 threatens democracy.", "Free speech protects the unpopular first."]
 11. verbal_tics: Array of 3-5 phrases this institution uses repeatedly in \
-public communications. Literal phrases as they'd appear in press releases or \
-posts. Examples for Heritage: ["As conservatives have long argued...", \
-"This is a direct attack on American values.", "Free enterprise demands..."] \
-Examples for ACLU: ["We will defend this right in court.", "No one is above \
-the Constitution.", "This is a civil rights issue."]
+its ACTUAL posts (not its press releases or About page). Literal phrases \
+as they'd appear in a tweet or comment. Examples for Heritage: \
+["As conservatives have long argued...", "This is a direct attack on \
+American values.", "Free enterprise demands..."] Examples for ACLU: \
+["We will defend this right in court.", "No one is above the \
+Constitution.", "This is a civil rights issue."]
+AVOID these failure modes:
+- Marketing taglines or mission statements ("Building X", "Empowering Y", \
+"Driving Z across India / Europe / the world").
+- About-page openers ("As a leading X...", "As an RBI-licensed Y...").
+- Press-release verbs ("announces", "celebrates", "welcomes", "is \
+committed to", "is excited to").
 12. never_say: Array of 3-5 sentences this institution would NEVER publish \
-because they contradict their mission. LITERAL off-brand sentences. Examples \
-for Heritage Foundation: ["The free market has failed and we need more \
-regulation.", "We support reparations.", "Progressive taxation is morally \
-justified."] Examples for ACLU: ["Some speech should be banned for public \
-safety.", "Government surveillance is necessary for security.", \
-"We defer to law enforcement judgment."] These are NEGATIVE examples — the \
-institution would find them offensive or absurd.
-13. speaking_style: 1-2 sentences describing official register and rhetorical \
-habits. Example for Heritage: "Formal think-tank voice with constitutional \
-and free-market framing. Frequently cites founders and historical precedent. \
-Avoids populist register."
+because they contradict their mission. LITERAL off-brand sentences. \
+Examples for Heritage Foundation: ["The free market has failed and we \
+need more regulation.", "We support reparations.", "Progressive \
+taxation is morally justified."] Examples for ACLU: ["Some speech \
+should be banned for public safety.", "Government surveillance is \
+necessary for security.", "We defer to law enforcement judgment."] \
+These are NEGATIVE examples — the institution would find them \
+offensive or absurd.
+AVOID these failure modes:
+- Neutral facts dressed as positions — even allies might post them, so \
+they aren't off-brand.
+- Abstract negations of the institution's mission ("Our work is \
+unimportant") — too vague.
+- Inverted slogans (just flipping a verbal_tic into negative form).
+A good never_say is a CONCRETE QUOTE that would violate the \
+institution's commercial, regulatory, or ideological identity if \
+posted from its account.
+13. speaking_style: 1-2 sentences describing register and rhetorical \
+habits. Example for Heritage: "Formal think-tank voice with \
+constitutional and free-market framing. Frequently cites founders and \
+historical precedent. Avoids populist register."
+AVOID these failure modes:
+- The template "Formal/Professional/Authoritative [X] voice with \
+[adjective]" — that pattern is the documented failure mode this \
+prompt exists to prevent.
+- Marketing-deck phrases: "balanced and thoughtful", "uses inclusive \
+language", "emphasizes trust and transparency", "authoritative yet \
+friendly tone".
+- Generic register descriptors with no specifics. If you can't name a \
+literal mannerism this account uses, the description is too vague.
 
-14. role: ONE lowercase token from this fixed enum describing what KIND \
-of participant this institution is in the scenario. Required.
-    public_figure | organization | regulator | advocate | journalist | \
-    investor | competitor | customer | community | academic | partner | \
-    insider | other
+14. role: ONE lowercase token from this fixed enum. Each role has a default \
+TONAL HINT — use it when picking the voice for this institution. Required.
+    public_figure  — known account run by a single named person. Sound
+                     like them, not a corporate spokesperson.
+    organization   — company / brand acting as itself. Match how this
+                     brand actually tweets — usually informal, not their
+                     press releases.
+    regulator      — government / oversight body. Dry, specific,
+                     citation-heavy. Never explains, never previews.
+    advocate       — activist, nonprofit, civil society. Partisan,
+                     urgent, no balanced framing.
+    journalist     — outlet, masthead, beat reporter account.
+                     Breaking-news cadence, named sources, snarky in
+                     replies.
+    investor       — fund, analyst desk. Terse, numbers-first.
+    competitor     — same-market rival. Counter-positions own product
+                     without naming the subject. Selective subtweet.
+    customer       — consumer voice, trade group, power-user channel.
+                     Informal, complains in specifics.
+    community      — subreddit, fediverse, online community account.
+                     Inside jokes, meta-jokes, gallows humor about
+                     their own community.
+    academic       — research lab, journal, scholar account. Citations
+                     + understatement. Precision over warmth.
+    partner        — collaborator with the subject. Supportive but
+                     pragmatic, not glowing.
+    insider        — current or former employee account. Knows details
+                     outsiders don't; understates, never grandstands.
+    other          — fallback only. Match the institution's real-world
+                     voice.
 
 15. stance: ONE lowercase token describing how this institution feels \
 about the scenario's central subject. Required.
