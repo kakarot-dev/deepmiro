@@ -25,6 +25,7 @@ const props = defineProps<Props>();
 // "↳ post #N wrote (not in view buffer)" referencing its own id.
 const TARGET_POST_ACTIONS = new Set([
   "LIKE_POST",
+  "DISLIKE_POST",
   "UPVOTE_POST",
   "UPVOTE",
   "CREATE_COMMENT",
@@ -35,16 +36,36 @@ const TARGET_POST_ACTIONS = new Set([
 const targetPostId = computed<number | null>(() => {
   if (!TARGET_POST_ACTIONS.has(props.action.action_type)) return null;
   const args: any = props.action.action_args ?? {};
-  const id = args.post_id ?? args.target_post_id ?? args.quoted_id;
+  // QUOTE_POST/REPOST use `quoted_id` for the source post; LIKE/COMMENT use `post_id`.
+  const id = args.quoted_id ?? args.target_post_id ?? args.post_id;
   return typeof id === "number" ? id : null;
+});
+// Inline content/author the OASIS wrapper attached at write time
+// (see engine/scripts/run_parallel_simulation.py). REPOST + QUOTE_POST
+// expose `original_content`/`original_author_name`; LIKE_POST,
+// DISLIKE_POST and CREATE_COMMENT expose `post_content`/`post_author_name`.
+// These are the source of truth — they describe the exact post the
+// agent acted on, captured at action time. We only fall back to the
+// posts/agents maps when an action type doesn't carry inline context.
+const inlineTargetContent = computed<string>(() => {
+  const args: any = props.action.action_args ?? {};
+  return args.original_content || args.post_content || "";
+});
+const inlineTargetAuthor = computed<string>(() => {
+  const args: any = props.action.action_args ?? {};
+  return args.original_author_name || args.post_author_name || "";
 });
 const targetPost = computed(() => {
   if (targetPostId.value == null || !props.posts) return null;
   return props.posts.get(targetPostId.value) ?? null;
 });
 const targetAuthor = computed(() => {
+  if (inlineTargetAuthor.value) return { name: inlineTargetAuthor.value };
   if (!targetPost.value || !props.agents) return null;
   return props.agents.get(targetPost.value.user_id) ?? null;
+});
+const targetContent = computed<string>(() => {
+  return inlineTargetContent.value || targetPost.value?.content || "";
 });
 const targetUserId = computed<number | null>(() => {
   const args: any = props.action.action_args ?? {};
@@ -172,7 +193,7 @@ function timeAgo(): string {
           <span v-else class="quoted-author dim">post #{{ targetPostId }}</span>
           <span class="quoted-verb"> wrote</span>
         </div>
-        <div v-if="targetPost?.content" class="quoted-content">{{ targetPost.content }}</div>
+        <div v-if="targetContent" class="quoted-content">{{ targetContent }}</div>
         <div v-else class="quoted-placeholder">(content not in current view buffer)</div>
       </div>
       <div v-if="!action.success" class="failure">
