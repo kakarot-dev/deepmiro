@@ -176,6 +176,56 @@ def get_entities_by_type(graph_id: str, entity_type: str):
 
 # ============== 模拟管理接口 ==============
 
+@simulation_bp.route('/create-and-run', methods=['POST'])
+def create_and_run_simulation():
+    """End-to-end pipeline: project + ontology + graph build + sim prepare + start.
+
+    Returns the new simulation_id immediately. The pipeline runs in a
+    background thread; clients track progress via /api/simulation/<id>/status
+    or the SSE /events stream.
+
+    Body (JSON):
+        {
+            "prompt": "<scenario, min 50 chars unless document_id provided>",
+            "preset": "quick" | "standard" | "deep",     # optional, default quick
+            "platform": "twitter" | "reddit" | "both",   # optional, default both
+            "document_id": "doc_xxxx",                    # optional, from /api/documents/upload
+            "rounds": 20,                                 # optional, overrides preset
+            "agent_count": 10                             # optional, not currently honoured (config gen decides)
+        }
+
+    Returns:
+        {"success": true, "data": {"simulation_id": "sim_xxxx"}}
+    """
+    from ..services.orchestration import create_and_run
+
+    try:
+        data = request.get_json() or {}
+        prompt = (data.get('prompt') or '').strip()
+        if not prompt:
+            return jsonify({"success": False, "error": "prompt is required"}), 400
+
+        simulation_id = create_and_run(
+            prompt=prompt,
+            preset=data.get('preset'),
+            platform=data.get('platform'),
+            document_id=data.get('document_id'),
+            rounds=data.get('rounds'),
+            agent_count=data.get('agent_count'),
+            user_id=g.get('user_id'),
+        )
+
+        return jsonify({
+            "success": True,
+            "data": {"simulation_id": simulation_id},
+        })
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("create-and-run failed")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
 @simulation_bp.route('/create', methods=['POST'])
 def create_simulation():
     """
