@@ -28,8 +28,10 @@ interface Props {
    *  don't have to plumb it through; the interview section just
    *  hides when missing. */
   simId?: string | null;
-  /** Terminal sim → backend reconstructs interviews from history.
-   *  Pure UX hint here for the "reconstructed" badge. */
+  /** Terminal sim — backend rebuilds the agent's context from its
+   *  persona + persisted posts + actions for the interview. The UI
+   *  doesn't surface this distinction to the user; the interview just
+   *  works either way. */
   isTerminal?: boolean;
 }
 const isHub = computed(() => props.agent?.archetype === "Scenario");
@@ -89,11 +91,16 @@ const postCount = computed(() =>
 
 // ─── Interview ────────────────────────────────────────────────────
 // Renders only when we have both simId and a non-hub agent. Uses the
-// existing /api/simulation/interview backend; live sims route through
-// OASIS IPC, terminal sims get reconstructed from persona+posts+actions.
+// /api/simulation/interview backend. Live sims route through OASIS
+// IPC; terminal sims rebuild the agent's context from persisted
+// data — both paths return the same response shape, so this UI
+// doesn't need to care which one ran.
 const agentId = computed<number | null>(() => {
   if (isHub.value) return null;
-  const id = props.agent?.id ?? props.profile?.user_id ?? props.profile?.agent_id;
+  // Prefer the persona's real 0..N user_id (matches the backend trace
+  // tables). `agent.id` is the graph-node id and is a hash for the
+  // entity-graph variant, so it must be a last-resort fallback.
+  const id = props.profile?.user_id ?? props.profile?.agent_id ?? props.agent?.id;
   return typeof id === "number" ? id : null;
 });
 const interviewSupported = computed(() => agentId.value != null && !!props.simId);
@@ -214,7 +221,6 @@ watch(
         <div class="section-title">
           <MessageSquareText :size="12" />
           Interview {{ name.split(" ")[0] }}
-          <span v-if="isTerminal" class="post-count dim">reconstructed</span>
         </div>
         <div class="interview-input">
           <textarea

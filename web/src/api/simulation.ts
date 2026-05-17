@@ -189,9 +189,10 @@ export async function getPosts(simId: string, limit = 50): Promise<{ posts: Arra
 }
 
 // ─── Interview ─────────────────────────────────────────────────────
-// Live sims route through OASIS IPC; terminal sims get reconstructed
-// from persona + posts + actions via a direct LLM call. The backend
-// transparently handles both — same endpoint either way.
+// Live sims route through OASIS IPC; terminal sims have the agent's
+// context rebuilt from persisted persona + posts + actions via a
+// direct LLM call. The backend transparently handles both — same
+// endpoint and response shape either way.
 
 export interface InterviewTurn {
   agent_id: number;

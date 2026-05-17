@@ -199,8 +199,23 @@ Then offer next steps:
 ### Step 7: Interview (optional)
 
 If user wants to talk to a persona:
-1. Call `interview_agent` with simulation_id, agent name, and their question
-2. Present the response in character — as if the persona is answering directly
+1. Resolve the persona's numeric `agent_id` — call `simulation_data` with
+   `data_type: "profiles"` and pick the persona by name; the `user_id`
+   field is the 0-indexed agent_id you pass to `interview_agent`. Do
+   NOT guess an id or use the graph-node id.
+2. Call `interview_agent` with `simulation_id`, the numeric `agent_id`,
+   and the user's question as `message`. Omit `platform` to get both
+   Twitter and Reddit responses (useful for comparing voices); pass
+   `platform: "twitter"` or `"reddit"` for a single response.
+3. Present the response in character — as if the persona is answering
+   directly. Don't preface with "the agent says".
+4. Works on both live and completed sims — the backend rebuilds the
+   agent's context from persisted data when the sim has terminated, so
+   you don't need to gate on simulation state.
+
+If the user wants more depth, call `interview_agent` again with a
+follow-up. Each call is one question; the persona remembers prior
+turns in the same sim.
 
 ---
 

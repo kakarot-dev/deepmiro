@@ -149,8 +149,11 @@ const isTerminal = computed(() =>
   ["FAILED", "CANCELLED", "INTERRUPTED"].includes(state.value),
 );
 
-// For interview UX: COMPLETED also takes the "reconstructed" path
-// server-side, so flag it as terminal for the sheet's badge.
+// For the interview sheet: COMPLETED takes the same code path as
+// terminal states (rebuilt-from-persisted-data interview) even though
+// the sim itself isn't an error state. Used for any sheet UI that
+// wants to know "interview is going to run against persisted data
+// rather than a live subprocess."
 const isTerminalForInterview = computed(() =>
   ["COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"].includes(state.value),
 );

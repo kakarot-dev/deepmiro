@@ -1109,8 +1109,12 @@ class SimulationRunner:
                 "agent_id": agent_id,
                 "prompt": prompt,
                 "result": {
+                    "agent_id": agent_id,
                     "response": response_text,
-                    "platform": platform or "reconstructed",
+                    # If no platform was passed, default to the one the
+                    # persona was reconstructed from. The frontend treats
+                    # this as the canonical platform for display.
+                    "platform": platform or "twitter",
                 },
                 "timestamp": datetime.now().isoformat(),
             }
@@ -1181,3 +1185,58 @@ class SimulationRunner:
             "result": results,
             "timestamp": datetime.now().isoformat(),
         }
+
+    @classmethod
+    def get_interview_history(
+        cls,
+        simulation_id: str,
+        platform: Optional[str] = None,
+        agent_id: Optional[int] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return prior interview turns persisted in the simulation's
+        SQLite trace tables. Works on live and terminal sims alike.
+
+        Each item has: agent_id, prompt, response, timestamp, platform.
+        Filtered by platform if provided, then by agent_id if provided,
+        and capped at `limit` newest-first.
+        """
+        from .simulation_file_manager import SimulationFileManager
+
+        fm = SimulationFileManager(simulation_id)
+        if not fm.exists():
+            raise ValueError(f"Simulation not found: {simulation_id}")
+
+        rows = fm.query_interview_history(
+            agent_id=agent_id if isinstance(agent_id, int) else None,
+        )
+
+        flattened: list[dict[str, Any]] = []
+        for row in rows:
+            plat = row.get("platform") or ""
+            if platform and plat != platform:
+                continue
+            info = row.get("info") or {}
+            if isinstance(info, str):
+                # Fallback if the file manager didn't parse JSON.
+                try:
+                    info = json.loads(info)
+                except json.JSONDecodeError:
+                    info = {}
+            prompt = info.get("prompt") or row.get("prompt") or ""
+            response = info.get("response") or row.get("response") or ""
+            if not prompt and not response:
+                continue
+            flattened.append({
+                "agent_id": row.get("user_id") or info.get("agent_id") or agent_id,
+                "prompt": prompt,
+                "response": response,
+                "timestamp": row.get("created_at") or info.get("timestamp") or "",
+                "platform": plat,
+            })
+
+        # Newest-first, capped.
+        flattened.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+        if isinstance(limit, int) and limit > 0:
+            flattened = flattened[:limit]
+        return flattened

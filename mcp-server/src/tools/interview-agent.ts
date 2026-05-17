@@ -9,12 +9,19 @@ import { toMcpError } from "../errors/index.js";
 
 const inputSchema = {
   simulation_id: z.string().describe("The simulation ID"),
-  agent_id: z.coerce.number().int().min(0).describe("The agent's numeric ID within the simulation"),
+  agent_id: z.coerce.number().int().min(0).describe(
+    "The agent's 0-indexed numeric id within the simulation — get this " +
+    "from `simulation_data data_type=profiles` (the `user_id` field) " +
+    "or from the action log. NOT the graph-node id.",
+  ),
   message: z.string().min(1).describe("Question or prompt to send to the agent"),
   platform: z
     .enum(["twitter", "reddit"])
     .optional()
-    .describe("Which platform persona to interview. Omit for both."),
+    .describe(
+      "Which platform persona to interview. Omit to get both platforms' " +
+      "responses (recommended when comparing voices).",
+    ),
 };
 
 export function registerInterviewAgent(server: McpServer, client: MirofishClient): void {
@@ -25,7 +32,13 @@ export function registerInterviewAgent(server: McpServer, client: MirofishClient
       description:
         "Chat with a specific simulated agent to understand their perspective, " +
         "reasoning, and predicted behavior. The agent responds in character " +
-        "based on their persona and simulation experience.",
+        "based on their persona, posts, and actions during the simulation.\n\n" +
+        "Works on both live and completed simulations — for completed sims, " +
+        "the agent's context is rebuilt from persisted data, so you can still " +
+        "interrogate any persona after the run is done.\n\n" +
+        "Tip: call this multiple times in a single conversation to pull " +
+        "concrete quotes for a report. Each call is one question; the agent " +
+        "remembers prior interview turns in this sim.",
       inputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
