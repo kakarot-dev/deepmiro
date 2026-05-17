@@ -55,6 +55,12 @@ const platformOptions = [
 ];
 const presetIcons = { quick: Zap, standard: Waves, deep: Mountain };
 
+const features = [
+  "Extracts every named stakeholder automatically",
+  "Spins up 20–50 persona agents with distinct beliefs",
+  "Simulates Twitter & Reddit reactions for up to 72 rounds",
+];
+
 const examples = [
   {
     title: "Elon buys Reddit",
@@ -188,20 +194,59 @@ function useExample(text: string) {
 
     <!-- Setup form -->
     <div v-else class="setup-form">
-      <header class="hero">
-        <Badge variant="outline" class="kicker">
-          <Sparkles :size="11" /> DeepMiro prediction engine
-        </Badge>
-        <h1>Describe a scenario. Watch it play out.</h1>
-        <p class="lede">
-          Paste a news event, announcement, or hypothetical. We'll extract the
-          stakeholders, spin up a persona for each, and simulate how the
-          conversation unfolds on Twitter and Reddit.
-        </p>
-      </header>
+      <div class="setup-grid">
+        <header class="hero">
+          <p class="kicker">
+            <Sparkles :size="10" /> DeepMiro prediction engine
+          </p>
+          <h1>
+            Describe a scenario.<br />
+            <span class="h1-accent">Watch it play out.</span>
+          </h1>
+          <p class="lede">
+            Paste a news event, announcement, or hypothetical. We'll extract
+            the stakeholders, spin up a persona for each, and simulate how the
+            conversation unfolds.
+          </p>
 
-      <Card class="form-card" :padded="false">
-        <div class="form-inner">
+          <ul class="hero-features">
+            <li v-for="f in features" :key="f">
+              <span class="bullet-dot" aria-hidden="true" />{{ f }}
+            </li>
+          </ul>
+
+          <div class="hero-deco" aria-hidden="true">
+            <svg class="node-cluster" viewBox="0 0 80 60" fill="none">
+              <line x1="14" y1="14" x2="40" y2="30" stroke="currentColor" stroke-width="0.8" />
+              <line x1="40" y1="30" x2="66" y2="14" stroke="currentColor" stroke-width="0.8" />
+              <line x1="40" y1="30" x2="22" y2="48" stroke="currentColor" stroke-width="0.8" />
+              <line x1="40" y1="30" x2="58" y2="48" stroke="currentColor" stroke-width="0.8" />
+              <line x1="14" y1="14" x2="22" y2="48" stroke="currentColor" stroke-width="0.8" />
+              <line x1="66" y1="14" x2="58" y2="48" stroke="currentColor" stroke-width="0.8" />
+              <circle cx="14" cy="14" r="3" fill="currentColor" />
+              <circle cx="66" cy="14" r="3" fill="currentColor" />
+              <circle cx="40" cy="30" r="4" fill="currentColor" />
+              <circle cx="22" cy="48" r="3" fill="currentColor" />
+              <circle cx="58" cy="48" r="3" fill="currentColor" />
+            </svg>
+            <svg class="dot-grid" viewBox="0 0 56 36" fill="currentColor">
+              <g>
+                <circle v-for="(c, i) in 12" :key="`d${i}`"
+                  :cx="(i % 4) * 16 + 4" :cy="Math.floor(i / 4) * 14 + 4" r="1.5" />
+              </g>
+            </svg>
+          </div>
+        </header>
+
+        <div class="form-wrap">
+          <svg class="corner corner-tl" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M1 12 L1 1 L12 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <svg class="corner corner-br" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M15 4 L15 15 L4 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <Card class="form-card" :padded="false">
+            <div class="form-inner">
           <!-- Prompt -->
           <section class="field prompt-area">
             <div class="field-head">
@@ -285,7 +330,9 @@ function useExample(text: string) {
             <ArrowRight v-if="!submitting" :size="14" />
           </Button>
         </div>
-      </Card>
+          </Card>
+        </div>
+      </div>
 
       <!-- Examples -->
       <section class="examples">
@@ -398,46 +445,146 @@ function useExample(text: string) {
 
 /* Main form */
 .setup-form {
-  max-width: 780px;
+  max-width: 1100px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--gap-xl);
 }
-.hero {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--gap-md);
+.setup-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--gap-xl);
+  align-items: start;
   padding-top: var(--gap-lg);
 }
+@media (min-width: 900px) {
+  .setup-grid {
+    grid-template-columns: 1fr 1.1fr;
+    gap: calc(var(--gap-xl) * 1.5);
+    align-items: start;
+  }
+  .hero {
+    position: sticky;
+    top: var(--gap-xl);
+    align-self: start;
+    max-height: calc(100vh - var(--gap-xl) * 2);
+  }
+}
+.hero {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--gap-md);
+}
+/* Login-style kicker — monospace, uppercase, widest tracking */
 .kicker {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: color-mix(in srgb, var(--primary) 75%, var(--fg-muted));
+}
+.kicker :deep(svg) {
+  opacity: 0.8;
 }
 .hero h1 {
-  font-size: 38px;
+  font-size: 36px;
   font-weight: 700;
   letter-spacing: -0.025em;
   line-height: 1.1;
   color: var(--fg-strong);
   margin: 0;
-  max-width: 620px;
-  background: linear-gradient(180deg, var(--fg-strong), color-mix(in srgb, var(--fg-strong) 70%, var(--primary)));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+}
+.h1-accent {
+  color: var(--primary);
+}
+@media (min-width: 1100px) {
+  .hero h1 {
+    font-size: 42px;
+  }
 }
 .lede {
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--fg-muted);
-  max-width: 600px;
+  max-width: 420px;
   margin: 0;
 }
 
+/* Feature bullets — login-style */
+.hero-features {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hero-features li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+.bullet-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--primary) 60%, transparent);
+  flex-shrink: 0;
+}
+
+/* Hero decorations — node cluster + dot grid */
+.hero-deco {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  color: var(--primary);
+}
+.node-cluster {
+  width: 64px;
+  height: auto;
+  opacity: 0.18;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.dot-grid {
+  width: 48px;
+  height: auto;
+  opacity: 0.14;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.hero:hover .node-cluster { opacity: 0.32; }
+.hero:hover .dot-grid { opacity: 0.24; }
+
+/* Form card wrap with corner accents */
+.form-wrap {
+  position: relative;
+  width: 100%;
+}
+.corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--primary) 40%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+.corner-tl { top: -6px; left: -6px; }
+.corner-br { bottom: -6px; right: -6px; }
+
 .form-card {
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
 }
 .form-inner {
   padding: var(--gap-lg) var(--gap-lg) var(--gap-md);
@@ -458,9 +605,7 @@ function useExample(text: string) {
 }
 .label {
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 500;
   color: var(--fg-muted);
 }
 .count {
