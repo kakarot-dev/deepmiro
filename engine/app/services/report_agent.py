@@ -776,6 +776,15 @@ simulated world, which represents the future
    - WRONG: The agent felt the situation was serious
    - RIGHT: > "This is way too serious, the school needs to respond" — Agent3 (Reddit)
    - These verbatim quotes are the core evidence of simulation predictions
+   - A post-generation validator strips every blockquote whose text is
+     not a substring of an actual agent post in the action log.
+     Fabricated quotes will be silently dropped, leaving the surrounding
+     analysis dangling. Stick to quotes you actually retrieved.
+   - If you cannot meet the 3-verbatim-quote minimum because the
+     simulation-data tools (get_agent_posts, get_simulation_actions)
+     returned no posts for this section's topic, output the
+     Insufficient-data stub described in rule 4 instead of writing
+     speculative prose with no evidence.
 
 3. [Language Consistency -- Quoted Content Must Be Translated to Report Language]
    - Tool-returned content may contain expressions in a language different from \
@@ -786,10 +795,26 @@ report language before including it
    - Preserve the original meaning when translating; ensure natural, fluent expression
    - This rule applies to both body text and quoted blocks (> format)
 
-4. [Faithfully Present Prediction Results]
+4. [Faithfully Present Prediction Results — Insufficient-Data Stub]
    - Report content must reflect simulation results representing the future
    - Do not add information that does not exist in the simulation
-   - If information on a certain aspect is insufficient, state this honestly
+   - If after calling the simulation-data tools (get_agent_posts,
+     get_simulation_actions, get_trending_posts, get_agent_activity)
+     the agents simply did not post about this section's topic, write
+     the section in this exact form:
+
+     **Insufficient data.** The simulation did not produce posts or
+     actions covering this aspect during the observation window. This
+     section is intentionally short rather than speculative.
+
+   - FORBIDDEN fallback patterns when data is thin:
+     * "logical expectations would typically arise..."
+     * "we can only outline what would..."
+     * "Anticipated [X]" / "potential [Y]" without a real-post citation
+     * "would likely / could / may" claims that are NOT quoting an
+       agent who actually said them
+     These read as speculation dressed as analysis and undermine the
+     report's credibility. Empty data is data — surface it honestly.
 
 ===============================================================
 [Format Specifications -- Extremely Important!]
@@ -838,14 +863,43 @@ This section analyzes...
 
 {tools_description}
 
-[Tool Usage Suggestions -- Please mix different tools; do not use only one type]
-- insight_forge: Deep insight analysis; automatically decomposes questions and \
-retrieves facts and relationships from multiple dimensions
-- panorama_search: Wide-angle panoramic search; understand the full picture, \
-timeline, and evolution of events
-- quick_search: Quickly verify a specific piece of information
-- interview_agents: Interview simulation Agents; obtain first-person perspectives \
-and real reactions from different roles
+[Tool Usage Suggestions]
+
+PRIMARY tools — start here every time. These read the actual action log
++ SQLite trace tables where the agents' real posts live. If you skip
+these and only use the graph tools below, you will get back "no
+observable posts" because the graph tools query the source document's
+entity graph, NOT what the agents actually said.
+
+- get_agent_posts: REAL post content written by agents during the
+  simulation. ALWAYS call this first — it's the source of every
+  verbatim quote that lands in the report.
+- get_simulation_actions: Filterable raw action log (by agent_name,
+  platform, action_type). Use this when you need a specific agent's
+  full timeline.
+- get_trending_posts: Posts that got the most engagement (likes +
+  shares). Use for "what dominated the discourse" framing.
+- get_agent_activity: Who was most active, who lurked. Use for
+  framing "X was dominant in the conversation" claims.
+- get_round_summary: Per-round action counts. Use for sequencing
+  ("by round 10..." style narrative).
+
+SECONDARY tools — use for CONTEXT around the actual posts. They
+query the knowledge graph built from the source document (entities,
+relationships) — NOT what agents said in the sim.
+
+- insight_forge: Deep insight analysis; automatically decomposes
+  questions and retrieves facts and relationships from multiple
+  dimensions of the source document.
+- panorama_search: Wide-angle panoramic search; understand the full
+  picture, timeline, and evolution of events as described in the
+  source document.
+- quick_search: Quickly verify a specific piece of information from
+  the source document.
+- interview_agents: Trigger NEW interviews with agents to get
+  first-person reactions. Use sparingly — these are fresh LLM calls
+  and cost time. Prefer get_agent_posts for material that's already
+  on record.
 
 ===============================================================
 [Workflow]
@@ -959,6 +1013,36 @@ Tools called {tool_calls_count}/{max_tool_calls} times (used: {used_tools_str})\
 [Reminder] The original text above MUST be quoted VERBATIM in the report. \
 Do not paraphrase or reword any agent quotes. Use the exact words returned by the tool.
 ==============================================================="""
+
+REACT_EMPTY_RESULT_HINT = """\
+
+[Important: this retrieval returned no data.]
+
+Before concluding the section has "no observable activity":
+
+1. If you have NOT yet called the simulation-data tools, call them now —
+   they query the actual action log, not the source-document graph:
+     - get_agent_posts (real posts written during the simulation)
+     - get_simulation_actions (raw action log)
+     - get_trending_posts (highest-engagement posts)
+   These are the source of ground truth. The graph tools (insight_forge,
+   panorama_search, quick_search) only see entities and relationships
+   from the source document — they do NOT see what agents posted.
+
+2. If you HAVE called the simulation-data tools and they also returned
+   nothing for this section's topic, output the section content as a
+   short "Insufficient data" stub in this exact form:
+
+   Final Answer:
+   **Insufficient data.** The simulation did not produce posts or
+   actions covering this aspect during the observation window. This
+   section is intentionally short rather than speculative.
+
+   Do NOT write paragraphs of "logical expectations", "we can deduce",
+   or "would likely" speculation. Empty data is data — surface it
+   honestly instead of filling the gap with plausible-sounding
+   guesses.
+"""
 
 REACT_INSUFFICIENT_TOOLS_MSG = (
     "[Notice] You have only called tools {tool_calls_count} times; "
@@ -1223,6 +1307,40 @@ class ReportAgent:
             len(content_by_agent), self.simulation_id,
         )
         return content_by_agent
+
+    @staticmethod
+    def _is_empty_tool_result(text: str) -> bool:
+        """Best-effort detection of "this retrieval returned nothing".
+
+        The ReACT loop uses this to decide whether to append the
+        empty-result hint that steers the LLM toward sim-data tools (or
+        an Insufficient-data stub if sim-data tools are also dry). False
+        positives are cheap (LLM ignores an unnecessary hint); false
+        negatives are expensive (LLM speculates from "no observable
+        posts").
+        """
+        if not isinstance(text, str):
+            return True
+        stripped = text.strip()
+        if not stripped:
+            return True
+        # JSON shapes our tools commonly return for empty results.
+        if stripped in {"[]", "{}", "null", "[ ]", "{ }"}:
+            return True
+        # Heuristic substrings — both Chinese (legacy) and English.
+        empty_markers = [
+            "no results", "no matching", "no posts", "no actions",
+            "no agent", "no observable", "empty", "not found",
+            "未找到", "没有找到", "没有数据", "暂无数据",
+            "no data available", "0 results", "0 rows", "no rows",
+            '"posts": []', '"actions": []', '"results": []',
+            '"items": []', '"data": []',
+        ]
+        low = stripped.lower()
+        for marker in empty_markers:
+            if marker.lower() in low:
+                return True
+        return False
 
     @staticmethod
     def _normalize_for_match(s: str) -> str:
@@ -1565,8 +1683,18 @@ class ReportAgent:
             logger.error(t('report.toolExecFailed', toolName=tool_name, error=str(e)))
             return f"Tool execution failed: {str(e)}"
     
-    # 合法的工具名称集合，用于裸 JSON 兜底解析时校验
-    VALID_TOOL_NAMES = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+    # Tool names accepted by the bare-JSON fallback parser. Must include
+    # every tool dispatched in _execute_tool, otherwise the LLM can ask
+    # for a real tool and have it silently rejected as "unknown".
+    VALID_TOOL_NAMES = {
+        # Graph-based tools (operate on the knowledge graph from the
+        # source document — entity nodes + relationships, NOT posts)
+        "insight_forge", "panorama_search", "quick_search", "interview_agents",
+        # Simulation-data tools (operate on the live action log + SQLite
+        # trace tables — this is where the agents' actual posts live)
+        "get_simulation_actions", "get_trending_posts", "get_agent_activity",
+        "get_agent_posts", "get_round_summary",
+    }
 
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """
@@ -1885,7 +2013,17 @@ class ReportAgent:
         min_tool_calls = 3  # 最少工具调用次数
         conflict_retries = 0  # 工具调用与Final Answer同时出现的连续冲突次数
         used_tools = set()  # 记录已调用过的工具名
-        all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+        # All tools the ReACT loop nudges the LLM toward via the
+        # "unused tools" hint. Sim-data tools are listed FIRST so the
+        # hint mentions them before the graph tools — graph tools alone
+        # query the source document's entity graph, not what agents
+        # actually posted, which leads to false "no observable posts"
+        # conclusions.
+        all_tools = {
+            "get_agent_posts", "get_simulation_actions", "get_trending_posts",
+            "get_agent_activity", "get_round_summary",
+            "insight_forge", "panorama_search", "quick_search", "interview_agents",
+        }
 
         # 报告上下文，用于InsightForge的子问题生成
         report_context = f"Section title: {section.title}\nSimulation requirement: {self.simulation_requirement}"
@@ -2066,6 +2204,28 @@ class ReportAgent:
                 if unused_tools and tool_calls_count < self.MAX_TOOL_CALLS_PER_SECTION:
                     unused_hint = REACT_UNUSED_TOOLS_HINT.format(unused_list=", ".join(unused_tools))
 
+                # Empty-retrieval guard: if the tool returned nothing,
+                # append a hint that steers the agent toward sim-data
+                # tools (in case it called only graph tools) or — if
+                # those are also exhausted — instructs it to emit an
+                # honest "Insufficient data" stub instead of speculation.
+                empty_hint = ""
+                if self._is_empty_tool_result(result):
+                    sim_data_tools = {
+                        "get_agent_posts", "get_simulation_actions",
+                        "get_trending_posts", "get_agent_activity",
+                        "get_round_summary",
+                    }
+                    sim_data_tried = bool(used_tools & sim_data_tools)
+                    empty_hint = REACT_EMPTY_RESULT_HINT
+                    if sim_data_tried:
+                        empty_hint += (
+                            "\n[You have already tried the simulation-data "
+                            "tools and they also returned no rows for this "
+                            "section's topic. Output the Insufficient-data "
+                            "stub now.]\n"
+                        )
+
                 messages.append({"role": "assistant", "content": response})
                 messages.append({
                     "role": "user",
@@ -2076,7 +2236,7 @@ class ReportAgent:
                         max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                         used_tools_str=", ".join(used_tools),
                         unused_hint=unused_hint,
-                    ),
+                    ) + empty_hint,
                 })
                 continue
 
