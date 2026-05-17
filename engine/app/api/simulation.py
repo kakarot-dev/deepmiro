@@ -1819,27 +1819,6 @@ def cancel_simulation(simulation_id: str):
         }), 500
 
 
-# Backward-compat route for older MCP clients — forwards to /cancel.
-@simulation_bp.route('/stop', methods=['POST'])
-@require_api_key
-def stop_simulation_legacy():
-    """Legacy stop endpoint. Forwards to `/cancel` semantics."""
-    data = request.get_json() or {}
-    simulation_id = data.get('simulation_id')
-    if not simulation_id:
-        return jsonify({"success": False, "error": t('api.requireSimulationId')}), 400
-
-    try:
-        SimulationRunner.stop_simulation(simulation_id, reason="api_stop")
-        snap = store.get(simulation_id)
-        return jsonify({"success": True, "data": snap.to_status_dict() if snap else {"simulation_id": simulation_id}})
-    except ValueError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
-    except Exception as e:
-        logger.error(f"Stop failed: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
 # ============== Unified status + SSE events ==============
 
 @simulation_bp.route('/<simulation_id>/status', methods=['GET'])
@@ -2662,71 +2641,8 @@ def get_interview_history():
         }), 500
 
 
-@simulation_bp.route('/env-status', methods=['POST'])
-def get_env_status():
-    """
-    获取模拟环境状态
-
-    检查模拟环境是否存活（可以接收Interview命令）
-
-    请求（JSON）：
-        {
-            "simulation_id": "sim_xxxx"  // 必填，模拟ID
-        }
-
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "env_alive": true,
-                "twitter_available": true,
-                "reddit_available": true,
-                "message": "环境正在运行，可以接收Interview命令"
-            }
-        }
-    """
-    try:
-        data = request.get_json() or {}
-        
-        simulation_id = data.get('simulation_id')
-        
-        if not simulation_id:
-            return jsonify({
-                "success": False,
-                "error": t('api.requireSimulationId')
-            }), 400
-
-        env_alive = SimulationRunner.check_env_alive(simulation_id)
-        
-        # 获取更详细的状态信息
-        env_status = SimulationRunner.get_env_status_detail(simulation_id)
-
-        if env_alive:
-            message = t('api.envRunning')
-        else:
-            message = t('api.envNotRunningShort')
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "simulation_id": simulation_id,
-                "env_alive": env_alive,
-                "twitter_available": env_status.get("twitter_available", False),
-                "reddit_available": env_status.get("reddit_available", False),
-                "message": message
-            }
-        })
-
-    except Exception as e:
-        logger.error(f"获取环境状态失败: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-# /close-env removed — lifecycle transitions handle cleanup.
-# Use /cancel to terminate a running simulation. COMPLETED is reached
-# automatically via the lifecycle state machine when the subprocess
-# emits the simulation_end event or exits cleanly.
+# /env-status and /close-env removed — lifecycle transitions handle
+# environment status and cleanup. Use /<id>/status to check sim state
+# (READY/SIMULATING means env is alive); use /<id>/cancel to terminate.
+# COMPLETED is reached automatically via the lifecycle state machine
+# when the subprocess emits the simulation_end event or exits cleanly.

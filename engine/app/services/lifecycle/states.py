@@ -48,6 +48,7 @@ ALLOWED: dict[SimState, frozenset[SimState]] = {
         SimState.GRAPH_BUILDING,
         SimState.FAILED,
         SimState.CANCELLED,
+        SimState.INTERRUPTED,
     }),
     SimState.GRAPH_BUILDING: frozenset({
         SimState.GENERATING_PROFILES,
