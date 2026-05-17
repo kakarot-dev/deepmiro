@@ -38,7 +38,7 @@
     "directory": "mcp-server"
   },
   "homepage": "https://deepmiro.org",
-  "author": "Joel Libni <joel@deepmiro.org> (https://github.com/kakarot-dev)",
+  "author": "Joel Libni <kakarot.joel@gmail.com> (https://github.com/kakarot-dev)",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/eventsource": "^1.1.15",

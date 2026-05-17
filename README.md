@@ -401,7 +401,7 @@ strong copyleft license — read it before adopting at scale.
 If your use case requires a license without the network-distribution
 share-back requirement (typical for embedding in a closed-source product
 or running a competing hosted offering), reach out at
-**joel@deepmiro.org** to discuss a commercial license. The hosted
+**kakarot.joel@gmail.com** to discuss a commercial license. The hosted
 deepmiro.org service is also explicitly designed for commercial users
 who want the engine without the AGPL obligation — use the API keys, skip
 the legal work.
