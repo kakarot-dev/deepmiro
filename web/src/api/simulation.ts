@@ -187,3 +187,91 @@ export async function getPosts(simId: string, limit = 50): Promise<{ posts: Arra
   );
   return data.data ?? { posts: [], total: 0 };
 }
+
+// ─── Interview ─────────────────────────────────────────────────────
+// Live sims route through OASIS IPC; terminal sims get reconstructed
+// from persona + posts + actions via a direct LLM call. The backend
+// transparently handles both — same endpoint either way.
+
+export interface InterviewTurn {
+  agent_id: number;
+  prompt: string;
+  response: string;
+  platform: "twitter" | "reddit";
+  timestamp: string;
+}
+
+/** Interview a single agent. Returns either a per-platform map (when
+ *  no `platform` is passed and the sim is dual-platform) or a single
+ *  response keyed under the chosen platform. We normalise both shapes
+ *  into an array of `InterviewTurn`s. */
+export async function interviewAgent(
+  simId: string,
+  agentId: number,
+  prompt: string,
+  platform?: "twitter" | "reddit",
+  timeout = 60,
+): Promise<InterviewTurn[]> {
+  const { data } = await http.post<Envelope<{
+    agent_id: number;
+    prompt: string;
+    result: {
+      agent_id: number;
+      response?: string;
+      platform?: string;
+      timestamp?: string;
+      platforms?: Record<string, { agent_id: number; response: string; platform: string; timestamp?: string }>;
+    };
+    timestamp: string;
+  }>>(`/api/simulation/interview`, {
+    simulation_id: simId,
+    agent_id: agentId,
+    prompt,
+    ...(platform ? { platform } : {}),
+    timeout,
+  });
+  if (!data.success || !data.data) {
+    throw new Error(data.error ?? "Interview failed");
+  }
+  const ts = data.data.timestamp;
+  const r = data.data.result;
+  const turns: InterviewTurn[] = [];
+  if (r.platforms) {
+    for (const [p, payload] of Object.entries(r.platforms)) {
+      turns.push({
+        agent_id: payload.agent_id,
+        prompt,
+        response: payload.response ?? "",
+        platform: p as "twitter" | "reddit",
+        timestamp: payload.timestamp ?? ts,
+      });
+    }
+  } else if (r.response != null) {
+    turns.push({
+      agent_id: r.agent_id,
+      prompt,
+      response: r.response,
+      platform: (r.platform as "twitter" | "reddit") ?? platform ?? "twitter",
+      timestamp: r.timestamp ?? ts,
+    });
+  }
+  return turns;
+}
+
+/** Fetch prior interview history for an agent (or all agents). Backend
+ *  reads from the sim DB so this works on terminal sims too. */
+export async function getInterviewHistory(
+  simId: string,
+  agentId?: number,
+  limit = 100,
+): Promise<InterviewTurn[]> {
+  const { data } = await http.post<Envelope<{ count: number; history: InterviewTurn[] }>>(
+    `/api/simulation/interview/history`,
+    {
+      simulation_id: simId,
+      ...(agentId != null ? { agent_id: agentId } : {}),
+      limit,
+    },
+  );
+  return data.data?.history ?? [];
+}

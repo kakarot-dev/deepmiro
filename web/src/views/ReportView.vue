@@ -50,8 +50,11 @@ onMounted(() => loadReport(false));
 <template>
   <div class="report-view">
     <div class="report-header">
-      <button class="back-btn" @click="router.push({ name: 'sim', params: { simId } })">
-        ← Back to live view
+      <button
+        class="back-btn"
+        @click="router.push({ name: 'sim', params: { simId }, query: { step: 'activity' } })"
+      >
+        ← Back to activity
       </button>
       <div class="report-actions">
         <button

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
+import { MessageSquareText, Send, Loader2 } from "lucide-vue-next";
 import Sheet from "@/components/ui/Sheet.vue";
 import Avatar from "@/components/ui/Avatar.vue";
 import Badge from "@/components/ui/Badge.vue";
 import { resolveArchetype } from "@/lib/archetypes";
 import { personaColor } from "@/lib/colors";
 import type { AgentActionRecord, AgentProfile, GraphNode } from "@/types/api";
-import type { ScenarioContext } from "@/api/simulation";
+import { type InterviewTurn, getInterviewHistory, interviewAgent, type ScenarioContext } from "@/api/simulation";
 
 interface Props {
   open: boolean;
@@ -22,6 +23,14 @@ interface Props {
   posts?: Map<number, { content: string; user_id: number; platform?: string }>;
   /** user_id → persona name lookup for "↳ Tim Cook wrote" headers. */
   agents?: Map<number, GraphNode>;
+  /** Current sim id — needed for interview API calls. Optional so
+   *  callers that just want to display persona info (no live actions)
+   *  don't have to plumb it through; the interview section just
+   *  hides when missing. */
+  simId?: string | null;
+  /** Terminal sim → backend reconstructs interviews from history.
+   *  Pure UX hint here for the "reconstructed" badge. */
+  isTerminal?: boolean;
 }
 const isHub = computed(() => props.agent?.archetype === "Scenario");
 const props = defineProps<Props>();
@@ -76,6 +85,67 @@ const postCount = computed(() =>
   props.recentActions.filter((a) =>
     ["CREATE_POST", "CREATE_COMMENT", "QUOTE_POST"].includes(a.action_type),
   ).length,
+);
+
+// ─── Interview ────────────────────────────────────────────────────
+// Renders only when we have both simId and a non-hub agent. Uses the
+// existing /api/simulation/interview backend; live sims route through
+// OASIS IPC, terminal sims get reconstructed from persona+posts+actions.
+const agentId = computed<number | null>(() => {
+  if (isHub.value) return null;
+  const id = props.agent?.id ?? props.profile?.user_id ?? props.profile?.agent_id;
+  return typeof id === "number" ? id : null;
+});
+const interviewSupported = computed(() => agentId.value != null && !!props.simId);
+const prompt = ref("");
+const asking = ref(false);
+const turns = ref<InterviewTurn[]>([]);
+const interviewError = ref<string | null>(null);
+
+async function loadHistory() {
+  if (!interviewSupported.value || !props.simId || agentId.value == null) return;
+  try {
+    turns.value = await getInterviewHistory(props.simId, agentId.value, 20);
+  } catch (err: any) {
+    // History load failures are non-fatal — user can still ask new
+    // questions. Don't surface as an error.
+    turns.value = [];
+  }
+}
+async function ask() {
+  if (asking.value || !prompt.value.trim() || !props.simId || agentId.value == null) return;
+  asking.value = true;
+  interviewError.value = null;
+  const q = prompt.value.trim();
+  try {
+    const newTurns = await interviewAgent(props.simId, agentId.value, q);
+    // Prepend newest first.
+    turns.value = [...newTurns, ...turns.value];
+    prompt.value = "";
+  } catch (err: any) {
+    interviewError.value =
+      err?.response?.data?.error ?? err?.message ?? "Interview failed";
+  } finally {
+    asking.value = false;
+  }
+}
+
+// Reload history when the sheet opens for a new agent. Clearing
+// drafted prompt + previous error too so each persona feels fresh.
+watch(
+  () => [props.open, agentId.value] as const,
+  (next, prev) => {
+    const [nextOpen, nextAgentId] = next;
+    if (!nextOpen) return;
+    const [prevOpen, prevAgentId] = prev ?? [false, null];
+    if (nextOpen !== prevOpen || nextAgentId !== prevAgentId) {
+      prompt.value = "";
+      interviewError.value = null;
+      turns.value = [];
+      void loadHistory();
+    }
+  },
+  { immediate: true },
 );
 </script>
 
@@ -137,6 +207,44 @@ const postCount = computed(() =>
         <div class="section-title">Interests</div>
         <div class="chip-row">
           <span v-for="topic in interests" :key="topic" class="chip">{{ topic }}</span>
+        </div>
+      </div>
+
+      <div v-if="interviewSupported" class="section">
+        <div class="section-title">
+          <MessageSquareText :size="12" />
+          Interview {{ name.split(" ")[0] }}
+          <span v-if="isTerminal" class="post-count dim">reconstructed</span>
+        </div>
+        <div class="interview-input">
+          <textarea
+            v-model="prompt"
+            rows="2"
+            :disabled="asking"
+            placeholder="Ask this agent anything — about a post, a stance, why they liked X…"
+            @keydown.enter.meta.exact.prevent="ask"
+            @keydown.enter.ctrl.exact.prevent="ask"
+          />
+          <button
+            class="ask-btn"
+            :disabled="asking || !prompt.trim()"
+            @click="ask"
+          >
+            <Loader2 v-if="asking" :size="14" class="spin" />
+            <Send v-else :size="14" />
+            <span>{{ asking ? "Asking…" : "Ask" }}</span>
+          </button>
+        </div>
+        <div v-if="interviewError" class="interview-error">{{ interviewError }}</div>
+        <div v-if="turns.length" class="interview-turns">
+          <div v-for="(t, i) in turns" :key="i" class="turn">
+            <div class="turn-q">{{ t.prompt }}</div>
+            <div class="turn-meta">
+              <Badge v-if="t.platform" variant="outline">{{ t.platform }}</Badge>
+              <span v-if="t.timestamp">{{ new Date(t.timestamp).toLocaleString() }}</span>
+            </div>
+            <div class="turn-a">{{ t.response }}</div>
+          </div>
         </div>
       </div>
 
@@ -235,6 +343,86 @@ const postCount = computed(() =>
   color: var(--fg-muted);
   letter-spacing: 0;
   text-transform: none;
+}
+.interview-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.interview-input textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 56px;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.interview-input textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.ask-btn {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--primary);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.ask-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.interview-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: var(--radius-sm);
+}
+.interview-turns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  margin-top: 4px;
+}
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.turn-q {
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.turn-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--fg-subtle);
+}
+.turn-a {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre-wrap;
 }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, watch } from "vue";
+import { useRoute } from "vue-router";
 import { XCircle, AlertTriangle, RefreshCw, FileText } from "lucide-vue-next";
 import StepNav, { type StepKey } from "@/components/StepNav.vue";
 import GraphView from "@/components/phases/GraphView.vue";
@@ -50,13 +51,36 @@ function defaultStepFor(s: string): StepKey {
   return "activity";
 }
 
-const userOverrideStep = ref<StepKey | null>(null);
+// Seed the user override from `?step=...` so deep links and the
+// "Back to activity" button from the report page land on the right
+// tab instead of bouncing back into the default-for-state (which
+// for COMPLETED sims is "report" — confusing when you came FROM
+// the report page).
+const route = useRoute();
+const VALID_STEPS: StepKey[] = ["graph", "personas", "activity", "report"];
+function stepFromQuery(): StepKey | null {
+  const q = route.query.step;
+  const v = Array.isArray(q) ? q[0] : q;
+  return typeof v === "string" && (VALID_STEPS as string[]).includes(v)
+    ? (v as StepKey)
+    : null;
+}
+const userOverrideStep = ref<StepKey | null>(stepFromQuery());
 const activeStep = computed<StepKey>(
   () => userOverrideStep.value ?? defaultStepFor(state.value),
 );
 function onStepChange(key: StepKey) {
   userOverrideStep.value = key;
 }
+// Re-seed if the route query changes (e.g., user clicks back-to-activity
+// again from a different report tab).
+watch(
+  () => route.query.step,
+  () => {
+    const next = stepFromQuery();
+    if (next) userOverrideStep.value = next;
+  },
+);
 // Auto-advance: when the phase changes, if the user hasn't manually
 // picked a step, follow the new default. If they did pick one, stay.
 watch(state, (s, prev) => {
@@ -123,6 +147,12 @@ async function handleCancel() {
 
 const isTerminal = computed(() =>
   ["FAILED", "CANCELLED", "INTERRUPTED"].includes(state.value),
+);
+
+// For interview UX: COMPLETED also takes the "reconstructed" path
+// server-side, so flag it as terminal for the sheet's badge.
+const isTerminalForInterview = computed(() =>
+  ["COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"].includes(state.value),
 );
 
 // Persona detail sheet wiring — graph-node click + persona-card click
@@ -336,6 +366,8 @@ const terminalLabel = computed(() => {
       :profile="sheetProfile"
       :recent-actions="sheetActions"
       :scenario="scenario"
+      :sim-id="props.simId"
+      :is-terminal="isTerminalForInterview"
       @update:open="(v) => (sheetOpen = v)"
     />
     <ConnectionSheet
