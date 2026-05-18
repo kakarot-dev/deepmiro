@@ -662,10 +662,33 @@ population behavior
 - Content should be concise, focusing on core predictive findings
 - Section structure should be designed by you based on prediction results
 
+[Title Rules — Specific, Not Generic]
+The `title` field MUST name the specific scenario being predicted, not a
+generic phrase. The reader sees this title above the report; they should
+know what the simulation was about without reading any further.
+
+- WRONG: "Future Prediction Report"
+- WRONG: "Simulation Analysis Report"
+- WRONG: "AI Industry Reaction Report"
+- RIGHT: "Anthropic's 30-Day Safety Pause: How AI Twitter Reacts to a PhD-Level Claude Opus 5"
+- RIGHT: "Predicted Indian Fintech Reaction to an RBI 24-Hour UPI Freeze"
+- RIGHT: "Sarvam AI Series B: How India's Tech Twitter Reacts to a $1.5B Sovereign-AI Unicorn"
+
+Format: lead with the entity/event being predicted, then a colon, then
+the predicted reaction or framing. Sentence case, no end punctuation,
+under ~100 characters.
+
+The `summary` field MUST be one sentence that previews the report's
+single biggest finding — not a description of what the report is.
+
+- WRONG: "Future trends and risk analysis based on simulation predictions"
+- WRONG: "Analysis of stakeholder reactions"
+- RIGHT: "Founders and safety researchers dominate the conversation, with the 30-day pause framed alternately as PR theater and the new industry baseline."
+
 Output a JSON report outline in the following format:
 {
-    "title": "Report Title",
-    "summary": "Report summary (one sentence summarizing the core predictive findings)",
+    "title": "<scenario-naming title following the rules above>",
+    "summary": "<one-sentence preview of the biggest predicted finding>",
     "sections": [
         {
             "title": "Section Title",
@@ -1470,20 +1493,28 @@ class ReportAgent:
             name = actor.get("name", "?")
             acts = actor.get("actions", 0)
             posts = actor.get("posts", 0)
+            first_round = actor.get("first_round", 0)
+            last_round = actor.get("last_round", 0)
             pct = (acts / total_actions * 100) if total_actions else 0
             actor_lines.append(
-                f"- {name}: {acts} actions ({pct:.1f}% of all), {posts} posts"
+                f"- {name}: {acts} actions ({pct:.1f}% of all), {posts} posts, "
+                f"first seen round {first_round}, last seen round {last_round}"
             )
         actor_block = "\n".join(actor_lines) if actor_lines else "(no actors recorded)"
 
         return (
             f"Total actions: **{total_actions}**\n"
             f"Total posts (CREATE_POST + QUOTE_POST + CREATE_COMMENT): **{total_posts}**\n"
-            f"Total rounds with activity: **{total_rounds}** (last round: {max_round})\n"
+            f"Total rounds with activity: **{total_rounds}** (rounds 0 through {max_round})\n"
             f"Active agents (made at least one action): **{agents_active}**\n"
             f"Actions by type: {_fmt_count_dict(by_type)}\n"
             f"Actions by platform: {_fmt_count_dict(by_platform)}\n"
-            f"\nTop-10 most active agents (with action and post counts):\n{actor_block}"
+            f"\nTop-10 most active agents (action/post counts + round span):\n{actor_block}\n"
+            f"\nUse the `first seen round … last seen round` span above when "
+            f"filling in `[rounds X-Y]` confidence tags on findings. If a "
+            f"finding spans multiple agents, use the min(first_round) and "
+            f"max(last_round) across the cited agents. Never write "
+            f"`rounds 0-0` — that's the placeholder we're trying to kill."
         )
 
     def _load_agent_action_content(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -2137,8 +2168,16 @@ class ReportAgent:
                 return self._default_outline()
 
             outline = ReportOutline(
-                title=outline_body.get("title") or response.get("title") or "Simulation Analysis Report",
-                summary=outline_body.get("summary") or response.get("summary") or "",
+                title=(
+                    outline_body.get("title")
+                    or response.get("title")
+                    or self._derive_default_title()
+                ),
+                summary=(
+                    outline_body.get("summary")
+                    or response.get("summary")
+                    or self._derive_default_summary()
+                ),
                 sections=sections
             )
 
@@ -2152,15 +2191,39 @@ class ReportAgent:
             logger.error(t('report.outlinePlanFailed', error=str(e)))
             return self._default_outline()
 
-    @staticmethod
-    def _default_outline() -> "ReportOutline":
+    def _derive_default_title(self) -> str:
+        """Build a scenario-naming fallback title from the simulation
+        requirement when the LLM planner doesn't emit one.
+
+        Better than a hardcoded "Future Prediction Report" because it at
+        least surfaces what the simulation was about. Truncated to ~90
+        chars and stripped of trailing whitespace; sentence case left as
+        the caller wrote it.
+        """
+        scenario = (self.simulation_requirement or "").strip()
+        if not scenario:
+            return "Simulation Analysis Report"
+        if len(scenario) > 90:
+            scenario = scenario[:90].rsplit(" ", 1)[0] + "…"
+        return f"Predicted Reactions: {scenario}"
+
+    def _derive_default_summary(self) -> str:
+        """Fallback one-liner for the summary line when the planner LLM
+        doesn't emit one. Still scenario-aware — beats a generic stock
+        phrase."""
+        scenario = (self.simulation_requirement or "").strip()
+        if not scenario:
+            return "Predicted stakeholder reactions, framing dynamics, and emergent risks from the simulation."
+        return f"Simulation-based prediction of how stakeholders react to: {scenario[:140]}"
+
+    def _default_outline(self) -> "ReportOutline":
         """Fallback outline used when the planner LLM call fails or
         returns an empty section list. Five sections cover the core
         predictive angles; the section writer fills them in regardless
         of the simulation topic."""
         return ReportOutline(
-            title="Future Prediction Report",
-            summary="Future trends and risk analysis based on simulation predictions",
+            title=self._derive_default_title(),
+            summary=self._derive_default_summary(),
             sections=[
                 ReportSection(title="Prediction Scenario and Core Findings"),
                 ReportSection(title="Population Behavior Prediction Analysis"),

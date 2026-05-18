@@ -269,24 +269,38 @@ class JsonlSimulationData(SimulationDataService):
 def _summarize_actions(
     simulation_id: str, actions: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    """Roll a raw action list into the authoritative-stats shape."""
+    """Roll a raw action list into the authoritative-stats shape.
+
+    Per-agent first/last round numbers are tracked in the same pass so
+    the report can render `[rounds X-Y]` confidence tags without a
+    second iteration. Pre-computing here is cheaper than asking the LLM
+    to filter the action log itself, and pre-computing once is cheaper
+    than re-deriving in the section ReACT loop.
+    """
     post_types = {"CREATE_POST", "CREATE_COMMENT", "QUOTE_POST"}
     actions_by_type: Counter = Counter()
     actions_by_platform: Counter = Counter()
     rounds_seen: set = set()
     per_agent_actions: Counter = Counter()
     per_agent_posts: Counter = Counter()
+    per_agent_first_round: Dict[str, int] = {}
+    per_agent_last_round: Dict[str, int] = {}
 
     for a in actions:
         atype = a.get("action_type", "UNKNOWN")
         platform = a.get("platform", "unknown")
         name = a.get("agent_name", "Unknown")
+        round_num = int(a.get("round_num", 0) or 0)
         actions_by_type[atype] += 1
         actions_by_platform[platform] += 1
-        rounds_seen.add(int(a.get("round_num", 0) or 0))
+        rounds_seen.add(round_num)
         per_agent_actions[name] += 1
         if atype in post_types:
             per_agent_posts[name] += 1
+        if name not in per_agent_first_round or round_num < per_agent_first_round[name]:
+            per_agent_first_round[name] = round_num
+        if name not in per_agent_last_round or round_num > per_agent_last_round[name]:
+            per_agent_last_round[name] = round_num
 
     total_actions = len(actions)
     total_posts = sum(actions_by_type[t] for t in post_types if t in actions_by_type)
@@ -296,6 +310,8 @@ def _summarize_actions(
             "name": name,
             "actions": per_agent_actions[name],
             "posts": per_agent_posts.get(name, 0),
+            "first_round": per_agent_first_round.get(name, 0),
+            "last_round": per_agent_last_round.get(name, 0),
         }
         for name, _ in per_agent_actions.most_common(10)
     ]
