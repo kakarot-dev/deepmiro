@@ -301,8 +301,12 @@ export async function interviewAgent(
   agentId: number,
   prompt: string,
   platform?: "twitter" | "reddit",
-  timeout = 60,
+  timeout = 120,
 ): Promise<InterviewTurn[]> {
+  // Interview LLM calls routinely take 30-60s, and the dual-platform
+  // path doubles that. The axios client default timeout is 60s which
+  // aborts before the backend can respond. Override per-request with
+  // a generous window that gives both platforms enough headroom.
   const { data } = await http.post<Envelope<{
     agent_id: number;
     prompt: string;
@@ -320,6 +324,8 @@ export async function interviewAgent(
     prompt,
     ...(platform ? { platform } : {}),
     timeout,
+  }, {
+    timeout: (timeout + 30) * 1000,
   });
   if (!data.success || !data.data) {
     throw new Error(data.error ?? "Interview failed");

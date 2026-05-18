@@ -267,22 +267,47 @@ class SimulationIPCClient:
             timeout=timeout
         )
     
+    # An OASIS subprocess can die without writing `status: stopped` —
+    # OOM-killed, container restarted, segfaulted in a C extension, etc.
+    # When that happens the on-disk flag stays "alive" forever and every
+    # interview attempt routes to IPC, hangs because no one is polling,
+    # and times out at 60s. We guard against that by requiring the
+    # subprocess to have refreshed its heartbeat timestamp recently — the
+    # OASIS-side poll loop calls touch_heartbeat() on each iteration.
+    HEARTBEAT_STALE_SECONDS = 30
+
     def check_env_alive(self) -> bool:
-        """
-        检查模拟环境是否存活
-        
-        通过检查 env_status.json 文件来判断
-        """
+        """Return True only if env_status.json says alive AND the heartbeat
+        is recent. A stale heartbeat means the OASIS process died without
+        cleanly writing "stopped" — treat it as dead and let the caller
+        fall back to the reconstructed-interview path."""
         status_file = os.path.join(self.simulation_dir, "env_status.json")
         if not os.path.exists(status_file):
             return False
-        
+
         try:
             with open(status_file, 'r', encoding='utf-8') as f:
                 status = json.load(f)
-            return status.get("status") == "alive"
         except (json.JSONDecodeError, OSError):
             return False
+
+        if status.get("status") != "alive":
+            return False
+
+        ts_raw = status.get("timestamp")
+        if not isinstance(ts_raw, str) or not ts_raw:
+            # No timestamp field — old format, refuse to trust it as
+            # alive. Forces fallback through the reconstruction path on
+            # any upgrade, which is the safe failure mode.
+            return False
+
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            return False
+
+        age = (datetime.now() - ts).total_seconds()
+        return age <= self.HEARTBEAT_STALE_SECONDS
 
 
 class SimulationIPCServer:
@@ -329,16 +354,30 @@ class SimulationIPCServer:
                 "timestamp": datetime.now().isoformat()
             }, f, ensure_ascii=False, indent=2)
     
+    def touch_heartbeat(self) -> None:
+        """Refresh env_status.json's timestamp. Called from the OASIS
+        poll loop so the client side can distinguish a live process from
+        a stale flag left behind by a crashed subprocess."""
+        if not self._running:
+            return
+        self._update_env_status("alive")
+
     def poll_commands(self) -> Optional[IPCCommand]:
         """
         轮询命令目录，返回第一个待处理的命令
-        
+
         Returns:
             IPCCommand 或 None
         """
+        # Heartbeat on every poll cycle so check_env_alive() can verify
+        # the OASIS process is genuinely responsive. _update_env_status
+        # writes once per call; the rewrite is cheap (small JSON) but
+        # callers can throttle externally if needed.
+        self.touch_heartbeat()
+
         if not os.path.exists(self.commands_dir):
             return None
-        
+
         # 按时间排序获取命令文件
         command_files = []
         for filename in os.listdir(self.commands_dir):

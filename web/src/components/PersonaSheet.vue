@@ -142,7 +142,11 @@ async function ask() {
   interviewError.value = null;
   const q = prompt.value.trim();
   try {
-    const newTurns = await interviewAgent(props.simId, agentId.value, q);
+    // Pin to twitter from the website UI — running both platforms
+    // doubles LLM latency and the website doesn't surface separate
+    // platform responses anyway. MCP/skill callers can still omit
+    // platform for the dual-platform comparison view.
+    const newTurns = await interviewAgent(props.simId, agentId.value, q, "twitter");
     // Prepend newest first.
     turns.value = [...newTurns, ...turns.value];
     prompt.value = "";

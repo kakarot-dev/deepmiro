@@ -50,11 +50,16 @@ async function load() {
 }
 
 function open(sim: SimulationSummary) {
-  if (sim.state === "COMPLETED") {
-    router.push({ name: "report", params: { simId: sim.simulation_id } });
-  } else {
-    router.push({ name: "sim", params: { simId: sim.simulation_id } });
-  }
+  // Always land on the full tabbed simulation view, never the dedicated
+  // report-only route. Coming from history users want to inspect the
+  // graph and activity first; the report tab is one click away from
+  // there. Hint `step=graph` explicitly so the SimulationRunView's
+  // default-for-COMPLETED logic ("report") doesn't kick in.
+  router.push({
+    name: "sim",
+    params: { simId: sim.simulation_id },
+    query: { step: "graph" },
+  });
 }
 
 onMounted(() => load());
