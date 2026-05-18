@@ -662,13 +662,19 @@ function injectScenarioHub(
   edges: GraphEdge[],
   scenario: ScenarioContext | null,
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  if (!scenario || nodes.length === 0) return { nodes, edges };
+  // The hub is part of the structural skeleton, not optional chrome. We
+  // render it whenever there are persona nodes — if the scenario fetch
+  // is slow, fails silently (auth, network, missing config.json mid-
+  // build), or returns null for any other reason, the hub still appears
+  // and just shows "Scenario · loading…" until the data arrives.
+  if (nodes.length === 0) return { nodes, edges };
+  const facts = scenario?.scenario_facts ?? [];
   const hub: GraphNode = {
     id: SCENARIO_HUB_ID,
     name: "Scenario",
     archetype: "Scenario",
-    post_count: scenario.scenario_facts.length,
-    lastPost: scenario.scenario_facts[0] ?? "",
+    post_count: facts.length,
+    lastPost: facts[0] ?? scenario?.prompt ?? "",
   };
   const reactsEdges: GraphEdge[] = nodes.map((n) => ({
     source: SCENARIO_HUB_ID,
