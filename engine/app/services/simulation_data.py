@@ -6,11 +6,31 @@ simulation's action logs. Default implementation reads from JSONL files.
 Self-hosters can write their own adapter.
 """
 
+import hashlib
 import json
 import os
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from typing import Dict, Any, List, Optional
+
+
+def action_id_for(
+    simulation_id: str,
+    platform: str,
+    agent_name: str,
+    timestamp: str,
+    action_type: str,
+    round_num: int,
+) -> str:
+    """Deterministic 12-char id for a single action.
+
+    Computed on read so we don't need a schema migration. Stable across
+    runs as long as the underlying JSONL row doesn't change.
+    """
+    h = hashlib.sha1(
+        f"{simulation_id}|{platform}|{agent_name}|{timestamp}|{action_type}|{round_num}".encode("utf-8")
+    ).hexdigest()
+    return h[:12]
 
 from ..config import Config
 from ..utils.logger import get_logger
@@ -52,6 +72,20 @@ class SimulationDataService(ABC):
     ) -> List[Dict[str, Any]]:
         """Get actual post/comment content from agents."""
 
+    def get_authoritative_stats(self, simulation_id: str) -> Dict[str, Any]:
+        """Pre-computed counts the LLM is required to use verbatim.
+
+        Default implementation derives stats by re-tallying the action
+        log via get_actions(); subclasses may override with a cheaper
+        path. Returns ground-truth totals so section prompts inject the
+        numbers directly instead of asking the LLM to count rows itself
+        (which has been observed to hallucinate).
+        """
+        # limit=10**9 effectively means "everything"; the default 50 cap
+        # would silently truncate and skew the totals.
+        actions = self.get_actions(simulation_id, limit=10**9)
+        return _summarize_actions(simulation_id, actions)
+
 
 class JsonlSimulationData(SimulationDataService):
     """Default implementation — reads from JSONL action logs on disk."""
@@ -60,7 +94,12 @@ class JsonlSimulationData(SimulationDataService):
         return os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
 
     def _load_actions(self, simulation_id: str) -> List[Dict[str, Any]]:
-        """Load all actions from both platform JSONL files."""
+        """Load all actions from both platform JSONL files.
+
+        Each returned action carries an `action_id` — a deterministic
+        12-char digest used by the report's citation system to link a
+        quote back to a specific row.
+        """
         actions = []
         sim_dir = self._sim_dir(simulation_id)
         for platform in ("twitter", "reddit"):
@@ -75,6 +114,14 @@ class JsonlSimulationData(SimulationDataService):
                             action = json.loads(line)
                             if "platform" not in action:
                                 action["platform"] = platform
+                            action["action_id"] = action_id_for(
+                                simulation_id=simulation_id,
+                                platform=action.get("platform", platform),
+                                agent_name=action.get("agent_name", ""),
+                                timestamp=action.get("timestamp", ""),
+                                action_type=action.get("action_type", ""),
+                                round_num=int(action.get("round_num", 0) or 0),
+                            )
                             actions.append(action)
                         except json.JSONDecodeError:
                             continue
@@ -213,6 +260,57 @@ class JsonlSimulationData(SimulationDataService):
                         "round": a.get("round_num", 0),
                     })
         return posts[:limit]
+
+    def get_authoritative_stats(self, simulation_id: str) -> Dict[str, Any]:
+        """Override the default with a direct one-pass tally."""
+        return _summarize_actions(simulation_id, self._load_actions(simulation_id))
+
+
+def _summarize_actions(
+    simulation_id: str, actions: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Roll a raw action list into the authoritative-stats shape."""
+    post_types = {"CREATE_POST", "CREATE_COMMENT", "QUOTE_POST"}
+    actions_by_type: Counter = Counter()
+    actions_by_platform: Counter = Counter()
+    rounds_seen: set = set()
+    per_agent_actions: Counter = Counter()
+    per_agent_posts: Counter = Counter()
+
+    for a in actions:
+        atype = a.get("action_type", "UNKNOWN")
+        platform = a.get("platform", "unknown")
+        name = a.get("agent_name", "Unknown")
+        actions_by_type[atype] += 1
+        actions_by_platform[platform] += 1
+        rounds_seen.add(int(a.get("round_num", 0) or 0))
+        per_agent_actions[name] += 1
+        if atype in post_types:
+            per_agent_posts[name] += 1
+
+    total_actions = len(actions)
+    total_posts = sum(actions_by_type[t] for t in post_types if t in actions_by_type)
+
+    top_actors = [
+        {
+            "name": name,
+            "actions": per_agent_actions[name],
+            "posts": per_agent_posts.get(name, 0),
+        }
+        for name, _ in per_agent_actions.most_common(10)
+    ]
+
+    return {
+        "simulation_id": simulation_id,
+        "total_actions": total_actions,
+        "total_posts": total_posts,
+        "actions_by_type": dict(actions_by_type),
+        "actions_by_platform": dict(actions_by_platform),
+        "total_rounds": len(rounds_seen),
+        "max_round": max(rounds_seen) if rounds_seen else 0,
+        "total_agents_active": len(per_agent_actions),
+        "top_actors": top_actors,
+    }
 
 
 # Default instance

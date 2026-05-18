@@ -125,6 +125,44 @@ export async function getReportById(reportId: string): Promise<ReportDocument | 
   }
 }
 
+export interface CitationRecord {
+  action_id: string;
+  agent?: string;
+  platform?: string;
+  timestamp?: string;
+  round?: number;
+  action_type?: string;
+  content?: string;
+}
+
+/** Quote → action_id mapping. Empty object if not yet generated. */
+export async function getReportCitations(
+  reportId: string,
+): Promise<Record<string, CitationRecord>> {
+  try {
+    const { data } = await http.get<Envelope<Record<string, CitationRecord>>>(
+      `/api/report/${reportId}/citations`,
+    );
+    return data.data ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Build a direct download URL for one of the export-format artifacts. */
+export function reportExportUrl(
+  reportId: string,
+  fmt:
+    | "md"
+    | "csv-actions"
+    | "csv-agents"
+    | "json-ground-truth"
+    | "json-citations"
+    | "bundle",
+): string {
+  return `/api/report/${reportId}/export/${fmt}`;
+}
+
 /** Fetch a report (triggers generation if not cached). Kept for backward
  *  compat — UIs that want live progress should use startReportGeneration +
  *  getReportProgress directly. */

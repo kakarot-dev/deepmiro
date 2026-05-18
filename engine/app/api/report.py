@@ -3,14 +3,19 @@ Report API路由
 提供模拟报告生成、获取、对话等接口
 """
 
+import csv
+import io
+import json
 import os
 import traceback
 import threading
-from flask import request, jsonify, send_file
+import zipfile
+from flask import request, jsonify, send_file, Response
 
 from . import report_bp
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
+from ..services.simulation_data import get_simulation_data
 from ..services.simulation_manager import SimulationManager
 from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
@@ -470,6 +475,161 @@ def download_report(report_id: str):
             "success": False,
             "error": str(e)
         }), 500
+
+
+@report_bp.route('/<report_id>/citations', methods=['GET'])
+def get_report_citations(report_id: str):
+    """Return the quote → action mapping the frontend uses to render the
+    citation popover.
+
+    Shape: { action_id: { agent, platform, timestamp, round, action_type,
+    content } }. Empty object if the report didn't surface any citable
+    quote (e.g., Insufficient-data sections only).
+    """
+    if ReportManager.get_report(report_id) is None:
+        return jsonify({"success": False, "error": t('api.reportNotFound', id=report_id)}), 404
+    return jsonify({"success": True, "data": ReportManager.load_citations(report_id)})
+
+
+def _export_actions_csv(simulation_id: str) -> bytes:
+    """Return a CSV byte buffer of every action in the sim."""
+    actions = get_simulation_data().get_actions(simulation_id, limit=10**9)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "action_id", "timestamp", "round", "platform",
+        "agent_name", "action_type", "content",
+    ])
+    for a in actions:
+        args = a.get("action_args") or {}
+        content = (
+            args.get("content") or args.get("quote_content")
+            or args.get("original_content") or ""
+        )
+        writer.writerow([
+            a.get("action_id", ""),
+            a.get("timestamp", ""),
+            a.get("round_num", 0),
+            a.get("platform", ""),
+            a.get("agent_name", ""),
+            a.get("action_type", ""),
+            content,
+        ])
+    return buf.getvalue().encode("utf-8")
+
+
+def _export_agents_csv(simulation_id: str) -> bytes:
+    """Return a CSV byte buffer of per-agent activity stats."""
+    activity = get_simulation_data().get_agent_activity(simulation_id) or {}
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["agent_name", "total_actions", "posts", "likes", "other"])
+    for row in activity.get("most_active", []):
+        writer.writerow([
+            row.get("name", ""),
+            row.get("total", 0),
+            row.get("posts", 0),
+            row.get("likes", 0),
+            row.get("other", 0),
+        ])
+    for name in activity.get("lurkers", []):
+        writer.writerow([name, 0, 0, 0, 0])
+    return buf.getvalue().encode("utf-8")
+
+
+def _export_ground_truth_json(simulation_id: str) -> bytes:
+    stats = get_simulation_data().get_authoritative_stats(simulation_id) or {}
+    return json.dumps(stats, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def _export_citations_json(report_id: str) -> bytes:
+    return json.dumps(
+        ReportManager.load_citations(report_id), ensure_ascii=False, indent=2,
+    ).encode("utf-8")
+
+
+@report_bp.route('/<report_id>/export/<fmt>', methods=['GET'])
+def export_report_artifact(report_id: str, fmt: str):
+    """Single dispatch point for every download offered alongside the report.
+
+    Supported `fmt` values:
+      - `md`              → the full report markdown (same as /download)
+      - `csv-actions`     → every action in the underlying simulation
+      - `csv-agents`      → per-agent activity table
+      - `json-ground-truth` → the authoritative stats block
+      - `json-citations`  → the quote → action map
+      - `bundle`          → zip wrapping every artifact above
+    """
+    report = ReportManager.get_report(report_id)
+    if report is None:
+        return jsonify({"success": False, "error": t('api.reportNotFound', id=report_id)}), 404
+    simulation_id = report.simulation_id
+
+    fmt = (fmt or "").lower()
+    if fmt == "md":
+        md_path = ReportManager._get_report_markdown_path(report_id)
+        if not os.path.exists(md_path):
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+                f.write(report.markdown_content or "")
+                md_path = f.name
+        return send_file(md_path, as_attachment=True, download_name=f"{report_id}.md")
+
+    if fmt == "csv-actions":
+        return Response(
+            _export_actions_csv(simulation_id),
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={report_id}-actions.csv"},
+        )
+
+    if fmt == "csv-agents":
+        return Response(
+            _export_agents_csv(simulation_id),
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={report_id}-agents.csv"},
+        )
+
+    if fmt == "json-ground-truth":
+        return Response(
+            _export_ground_truth_json(simulation_id),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename={report_id}-ground-truth.json"},
+        )
+
+    if fmt == "json-citations":
+        return Response(
+            _export_citations_json(report_id),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment; filename={report_id}-citations.json"},
+        )
+
+    if fmt == "bundle":
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                f"{report_id}.md",
+                report.markdown_content
+                or open(ReportManager._get_report_markdown_path(report_id)).read(),
+            )
+            zf.writestr(f"{report_id}-actions.csv", _export_actions_csv(simulation_id))
+            zf.writestr(f"{report_id}-agents.csv", _export_agents_csv(simulation_id))
+            zf.writestr(
+                f"{report_id}-ground-truth.json",
+                _export_ground_truth_json(simulation_id),
+            )
+            zf.writestr(
+                f"{report_id}-citations.json",
+                _export_citations_json(report_id),
+            )
+        buf.seek(0)
+        return send_file(
+            buf,
+            as_attachment=True,
+            download_name=f"{report_id}-bundle.zip",
+            mimetype="application/zip",
+        )
+
+    return jsonify({"success": False, "error": f"Unknown export format: {fmt}"}), 400
 
 
 @report_bp.route('/<report_id>', methods=['DELETE'])

@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "deepmiro",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Swarm prediction engine — simulate how communities react to events, policies, and announcements.",
   "author": {
     "name": "kakarot-dev",

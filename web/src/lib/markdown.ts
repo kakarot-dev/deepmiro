@@ -29,9 +29,22 @@ md.renderer.rules.fence = function (tokens, idx, options, env, self) {
   return defaultFence(tokens, idx, options, env, self);
 };
 
+// Matches `[^cite:<action_id>]` markers emitted by the backend quote
+// validator. The id is a 12-char sha1 prefix (a-f0-9). We let the regex
+// be a bit looser so renames stay tolerant.
+const CITE_TOKEN_RE = /\[\^cite:([a-f0-9_-]{6,32})\]/gi;
+
+function replaceCiteTokens(html: string): string {
+  return html.replace(
+    CITE_TOKEN_RE,
+    (_match, id: string) =>
+      `<sup class="cite-marker" data-action-id="${id}" title="Show source">¶</sup>`,
+  );
+}
+
 export function renderMarkdown(source: string): string {
   if (!source) return "";
-  const rendered = md.render(source);
+  const rendered = replaceCiteTokens(md.render(source));
   return DOMPurify.sanitize(rendered, {
     ALLOWED_TAGS: [
       "h1", "h2", "h3", "h4", "h5", "h6",
@@ -43,9 +56,12 @@ export function renderMarkdown(source: string): string {
       "a",
       "table", "thead", "tbody", "tr", "th", "td",
       "img",
-      "div", "span",
+      "div", "span", "sup",
     ],
-    ALLOWED_ATTR: ["href", "title", "src", "alt", "target", "rel", "class", "data-mermaid"],
+    ALLOWED_ATTR: [
+      "href", "title", "src", "alt", "target", "rel", "class",
+      "data-mermaid", "data-action-id",
+    ],
   });
 }
 

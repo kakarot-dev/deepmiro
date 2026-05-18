@@ -1,17 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { Loader2, FileText, AlertTriangle, Sparkles, RotateCw } from "lucide-vue-next";
+import { Loader2, FileText, AlertTriangle, Sparkles, RotateCw, Download } from "lucide-vue-next";
 import Button from "@/components/ui/Button.vue";
 import ReportProgress from "@/components/ReportProgress.vue";
+import CitationPopover from "@/components/CitationPopover.vue";
 import {
   getCachedReport,
   getReportById,
+  getReportCitations,
   getReportProgress,
+  reportExportUrl,
   startReportGeneration,
 } from "@/api/simulation";
 import { renderMarkdown, renderMermaidIn } from "@/lib/markdown";
 import type { ReportDocument } from "@/types/api";
-import type { ReportProgress as ReportProgressData } from "@/api/simulation";
+import type {
+  CitationRecord,
+  ReportProgress as ReportProgressData,
+} from "@/api/simulation";
 
 interface Props {
   simId: string;
@@ -25,6 +31,8 @@ const progress = ref<ReportProgressData | null>(null);
 const generating = ref(false);
 const err = ref<string | null>(null);
 const reportBody = ref<HTMLElement | null>(null);
+const citations = ref<Record<string, CitationRecord> | null>(null);
+const downloadOpen = ref(false);
 
 const renderedHtml = computed(() => {
   if (!report.value?.markdown_content) return "";
@@ -36,6 +44,31 @@ watch(renderedHtml, async (html) => {
   await nextTick();
   void renderMermaidIn(reportBody.value);
 });
+
+watch(
+  () => report.value?.report_id,
+  async (id) => {
+    if (!id) {
+      citations.value = null;
+      return;
+    }
+    citations.value = await getReportCitations(id);
+  },
+  { immediate: true },
+);
+
+function downloadHref(
+  fmt:
+    | "md"
+    | "csv-actions"
+    | "csv-agents"
+    | "json-ground-truth"
+    | "json-citations"
+    | "bundle",
+): string {
+  const id = report.value?.report_id;
+  return id ? reportExportUrl(id, fmt) : "#";
+}
 
 let pollHandle: number | null = null;
 let cancelToken = 0;
@@ -137,6 +170,38 @@ onUnmounted(() => {
     </div>
     <article v-else-if="report" class="report-wrap">
       <div class="report-toolbar">
+        <div class="download-menu">
+          <Button variant="ghost" size="sm" @click="downloadOpen = !downloadOpen">
+            <Download :size="14" />
+            Download
+          </Button>
+          <div v-if="downloadOpen" class="download-dropdown" @click="downloadOpen = false">
+            <a :href="downloadHref('bundle')" download>
+              <strong>Full bundle</strong>
+              <small>md + csv + json (.zip)</small>
+            </a>
+            <a :href="downloadHref('md')" download>
+              <strong>Report</strong>
+              <small>Markdown (.md)</small>
+            </a>
+            <a :href="downloadHref('csv-actions')" download>
+              <strong>Actions</strong>
+              <small>All agent actions (.csv)</small>
+            </a>
+            <a :href="downloadHref('csv-agents')" download>
+              <strong>Agent activity</strong>
+              <small>Per-agent stats (.csv)</small>
+            </a>
+            <a :href="downloadHref('json-ground-truth')" download>
+              <strong>Ground truth</strong>
+              <small>Authoritative counts (.json)</small>
+            </a>
+            <a :href="downloadHref('json-citations')" download>
+              <strong>Citations</strong>
+              <small>Quote → action map (.json)</small>
+            </a>
+          </div>
+        </div>
         <Button variant="ghost" size="sm" :disabled="generating" @click="regenerateReport">
           <Sparkles v-if="!generating" :size="14" />
           <Loader2 v-else :size="14" class="spin" />
@@ -144,6 +209,7 @@ onUnmounted(() => {
         </Button>
       </div>
       <div ref="reportBody" class="report" v-html="renderedHtml" />
+      <CitationPopover :host="reportBody" :citations="citations" />
     </article>
   </div>
 </template>
@@ -247,5 +313,72 @@ onUnmounted(() => {
 .report :deep(.mermaid-chart svg) {
   max-width: 100%;
   height: auto;
+}
+.report :deep(.cite-marker) {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  vertical-align: middle;
+  user-select: none;
+}
+.report :deep(.cite-marker:hover) {
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.report-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gap-sm);
+  padding: var(--gap-md) var(--gap-lg) 0;
+}
+
+.download-menu {
+  position: relative;
+}
+
+.download-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 240px;
+  background: var(--card);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+
+.download-dropdown a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.download-dropdown a:hover {
+  background: var(--bg-elevated, color-mix(in srgb, var(--primary) 6%, transparent));
+}
+
+.download-dropdown strong {
+  font-size: 13px;
+  color: var(--fg-strong);
+  font-weight: 600;
+}
+
+.download-dropdown small {
+  font-size: 11px;
+  color: var(--fg-subtle);
 }
 </style>

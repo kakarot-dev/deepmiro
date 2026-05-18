@@ -571,32 +571,50 @@ Returns actual posts, likes, reposts, and comments with content.
 - limit: max results (default 30)"""
 
 TOOL_DESC_TRENDING = """\
-[Trending Posts — Most Engaged Content]
-Returns posts that received the most engagement (likes, reposts).
-Use this to find viral content and key discussion points.
+[Trending Posts — Engagement-Ranked Content]
+Returns posts ordered by engagement (likes + reposts + comments) WITH the
+full post text. Use this to find the actual viral content — quotes, hashtags,
+specific framings that dominated.
+
+This is DIFFERENT from the GROUND TRUTH block: GROUND TRUTH lists top
+agents by activity volume; this returns top *posts* by reader engagement.
+Call this when you need to show "which message broke through" — you cannot
+infer that from action counts alone.
 
 [Parameters]
 - min_engagement: minimum likes+reposts to qualify (default 2)"""
 
 TOOL_DESC_AGENT_ACTIVITY = """\
-[Agent Activity — Who Did What]
-Returns per-agent statistics: total actions, posts created, likes given.
-Shows most active agents and lurkers.
-Use this to identify key influencers and silent observers."""
+[Agent Activity — Full Roster + Lurkers]
+Returns the FULL per-agent breakdown (not just the top 10 already in GROUND
+TRUTH): total actions, posts, likes, plus the set of lurkers (agents who
+created zero posts). Use this when you need to write about silence — who
+DIDN'T speak — or when the analysis hinges on mid-tier agents below the
+top-10 cutoff in GROUND TRUTH.
+
+If you only need top-10 totals, they are already in GROUND TRUTH — don't
+call this just to re-fetch them."""
 
 TOOL_DESC_AGENT_POSTS = """\
 [Agent Posts — Actual Content Created]
 Returns the actual text content of posts and comments created by agents.
 These are REAL quotes from the simulation — cite them directly.
 
+This is the PRIMARY tool for finding verbatim quotes. GROUND TRUTH tells
+you how many posts an agent made; this tells you WHAT they said.
+
 [Parameters]
 - limit: max posts to return (default 20)"""
 
 TOOL_DESC_ROUND_SUMMARY = """\
-[Round Summary — Timeline of the Simulation]
-Returns per-round statistics: how many agents were active, how many posts
-were created, how activity changed over time.
-Use this to identify peaks, quiet periods, and momentum shifts."""
+[Round Summary — Per-Round Timeline]
+Returns the per-round breakdown (round_num → action count, post count,
+active agent count). GROUND TRUTH gives you total_rounds and max_round
+but NOT the curve. Call this when you need to write about momentum shifts,
+peaks, quiet periods, or anything that depends on round-over-round deltas.
+
+If you only need the headline round count, use GROUND TRUTH — don't call
+this just to learn the simulation ran 20 rounds."""
 
 # ── 大纲规划 prompt ──
 
@@ -717,15 +735,40 @@ reference as an agent. Re-run the tool with the correct filter, or pick a \
 different quote from a real agent.
 
 ===============================================================
+[GROUND TRUTH — Authoritative Counts for This Simulation]
+===============================================================
+
+The numbers below are pre-computed from the simulation's action log
+and are CANONICAL. Every percentage and headline count you write MUST
+derive from these numbers (or from a count explicitly returned by a
+tool call — never from a count you inferred yourself).
+
+{authoritative_counts}
+
+Rules for using these numbers:
+- If you write "X% of actions were Y", X must be computed as
+  count(Y) / total_actions × 100, where total_actions is the number
+  above. Do NOT invent a different denominator.
+- If you write "X% of posts", use total_posts as the denominator (NOT
+  total_actions — those include likes, follows, etc.).
+- If your tool call returns a subset (e.g., posts by one agent),
+  compute a percentage against the matching total above, not against
+  the subset's own size.
+- If a count is missing from this block, treat it as unknown and use
+  qualitative language ("significant share", "most active group") —
+  do NOT guess.
+
+===============================================================
 [CRITICAL — No Invented Numerical Data]
 ===============================================================
 
 You are FORBIDDEN from inventing:
 
-- Percentages (e.g., "20% drop", "3-5% increase", "10-15% rise")
+- Percentages not derived from the Ground Truth block above
 - Currency figures (e.g., "$0.15 per pound", "2.5x wages")
 - Stock movements (e.g., "fell 4%", "downgraded Q2 outlook")
-- Specific counts, dates, or magnitudes not present in retrieved tool output
+- Specific counts, dates, or magnitudes not present in either the
+  Ground Truth block or a tool result
 
 If the simulation data does not contain a specific number, use QUALITATIVE \
 language instead:
@@ -735,7 +778,8 @@ language instead:
 - "market anxiety" (not "4% stock drop")
 
 Every numerical claim in your output must trace back to a verbatim figure \
-in a tool result. When in doubt, omit the number.
+in a tool result OR the Ground Truth block above. When in doubt, omit the \
+number.
 
 ===============================================================
 [Core Philosophy]
@@ -1007,7 +1051,7 @@ the same information
 
     Pie chart for a single split:
     ```mermaid
-    pie title Stakeholder activity share
+    pie title Customers drive 34% of all activity
         "Customers" : 41
         "Founders" : 18
         "Fintech orgs" : 22
@@ -1017,7 +1061,7 @@ the same information
     Bar chart for sentiment / scoring across groups:
     ```mermaid
     xychart-beta
-        title "Critical sentiment by stakeholder (% of group posts)"
+        title "Critics are 92% negative; fintechs barely critical at all"
         x-axis ["Founders", "Customers", "Critics", "Fintechs"]
         y-axis "% Critical" 0 --> 100
         bar [78, 64, 92, 5]
@@ -1030,7 +1074,60 @@ the same information
 
     Place the mermaid block immediately after the section's first
     paragraph of analysis, so the reader sees the quantitative summary
-    before the supporting quotes."""
+    before the supporting quotes.
+
+11. [Action-Titled Charts — Write the CONCLUSION as the Title]
+    Every chart title MUST state the conclusion the reader should walk
+    away with, not the variable being plotted. McKinsey/BCG convention:
+    the chart title is the headline, not the axis label.
+
+    WRONG: "Sentiment by stakeholder"           (descriptive — what)
+    WRONG: "Activity share across groups"       (descriptive — what)
+    RIGHT: "Critics are 92% negative; fintechs barely critical at all"  (conclusive — so what)
+    RIGHT: "Customers drive 34% of all activity"                          (conclusive — so what)
+    RIGHT: "Sentiment turns sharply negative after Round 12"              (conclusive — so what)
+
+    Rules for action titles:
+    - Lead with the biggest number or the biggest delta
+    - Use active verbs (drives, dominates, collapses, doubles)
+    - Sentence case; no end-period; under ~80 chars
+    - If you can't write a conclusion in the title, the chart probably
+      shouldn't be in this section — drop it.
+
+12. [Numbered Findings — Core Findings Section ONLY]
+    If the section you're writing is the FIRST section (the "Core
+    Findings" / "Executive Summary" / "Overview" section), structure
+    the body as 4-6 numbered ATOMIC findings, each one self-contained
+    and falsifiable. CSIS / wargame-after-action convention.
+
+    Format for each finding:
+    **Finding N: <single conclusive sentence with a specific number>.**
+    [N=<post or agent count>, rounds <a-b>]
+    <One paragraph of supporting evidence with ONE verbatim quote.>
+
+    Example:
+    **Finding 1: Founder-driven framing dominated the early conversation,
+    producing 4 of the top 5 most-engaged posts in rounds 0-8.** [N=18
+    founder posts, rounds 0-8]
+
+    > "This is exactly why we can't build in India - one day everything
+    > works, next day a freeze with 'security concerns' and no specifics."
+    > — Kunal Shah (Twitter)
+
+    Founder critique consolidated quickly because the regulatory-opacity
+    frame was familiar and easy to amplify; customer complaints followed
+    rather than led the conversation.
+
+    Rules:
+    - Bold the finding statement
+    - Always include a `[N=k, rounds X-Y]` confidence tag
+    - Each finding gets one verbatim quote AND one paragraph of analysis
+    - Findings must be independent — don't write "Finding 2 builds on
+      Finding 1"; reorder freely
+    - Total findings: 4 minimum, 6 maximum
+    - Other sections (Population Behavior / Narrative Dynamics / etc.)
+      stay in their existing analytical-paragraph format — numbered
+      findings are ONLY for the lead section."""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
 Completed section content (please read carefully to avoid repetition):
@@ -1239,11 +1336,23 @@ class ReportAgent:
         # profile files in the simulation directory. Injected into section
         # prompts so the LLM is told which agents exist.
         self._agent_allowlist: Optional[Set[str]] = None
-        # Anti-hallucination: per-agent action contents keyed by canonical
-        # agent name. Built lazily from simulation_action logs. Used to
-        # verify that every extracted blockquote is a real substring of a
-        # real action by the attributed agent.
-        self._agent_action_content: Optional[Dict[str, List[str]]] = None
+        # Anti-hallucination: per-agent action records keyed by canonical
+        # agent name. Built lazily from simulation_action logs. Each
+        # record carries {content, action_id, timestamp, round, platform}
+        # so the validator can both verify that a quote is real AND emit
+        # a citation marker pointing back to the source action.
+        self._agent_action_content: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        # Quote → citation index built side-by-side with the validator.
+        # Keyed by the 12-char action_id; persisted as citations.json
+        # next to the report markdown so the frontend popover can resolve
+        # `[^cite:action_xxx]` markers.
+        self._citations: Dict[str, Dict[str, Any]] = {}
+        # Authoritative stats (total_actions, totals_by_type, top_actors,
+        # …) pre-computed once and injected into every section system
+        # prompt as a [GROUND TRUTH] block. The LLM used to invent
+        # totals when asked to compute percentages; this kills that
+        # failure mode by giving it the numbers up front.
+        self._authoritative_stats: Optional[Dict[str, Any]] = None
 
         logger.info(t('report.agentInitDone', graphId=graph_id, simulationId=simulation_id))
 
@@ -1310,12 +1419,81 @@ class ReportAgent:
         ordered = sorted(allowlist, key=lambda s: s.lower())
         return "\n".join(f"- {n}" for n in ordered)
 
-    def _load_agent_action_content(self) -> Dict[str, List[str]]:
-        """Build {canonical_agent_name: [action_content, ...]} for this sim.
+    def _load_authoritative_stats(self) -> Dict[str, Any]:
+        """Lazy-load pre-computed action counts for this sim. Cached."""
+        if self._authoritative_stats is not None:
+            return self._authoritative_stats
+        try:
+            from .simulation_data import get_simulation_data
+            self._authoritative_stats = (
+                get_simulation_data().get_authoritative_stats(self.simulation_id)
+            )
+        except Exception as exc:
+            logger.warning(
+                "ReportAgent: authoritative stats unavailable (sim=%s): %s",
+                self.simulation_id, exc,
+            )
+            self._authoritative_stats = {}
+        return self._authoritative_stats
+
+    def _format_authoritative_stats_for_prompt(self) -> str:
+        """Render the ground-truth counts block injected into section prompts.
+
+        Every percentage the LLM writes must derive from these numbers
+        (or from counts inside a tool return — never from an inferred
+        total).
+        """
+        stats = self._load_authoritative_stats()
+        if not stats:
+            return (
+                "(authoritative counts unavailable — derive counts only from "
+                "the tool results you actually receive; do NOT invent totals)"
+            )
+
+        total_actions = stats.get("total_actions", 0)
+        total_posts = stats.get("total_posts", 0)
+        total_rounds = stats.get("total_rounds", 0)
+        max_round = stats.get("max_round", 0)
+        agents_active = stats.get("total_agents_active", 0)
+        by_type = stats.get("actions_by_type") or {}
+        by_platform = stats.get("actions_by_platform") or {}
+        top_actors = stats.get("top_actors") or []
+
+        def _fmt_count_dict(d: Dict[str, int]) -> str:
+            if not d:
+                return "(none)"
+            items = sorted(d.items(), key=lambda kv: -kv[1])
+            return ", ".join(f"{k}: {v}" for k, v in items)
+
+        actor_lines: List[str] = []
+        for actor in top_actors:
+            name = actor.get("name", "?")
+            acts = actor.get("actions", 0)
+            posts = actor.get("posts", 0)
+            pct = (acts / total_actions * 100) if total_actions else 0
+            actor_lines.append(
+                f"- {name}: {acts} actions ({pct:.1f}% of all), {posts} posts"
+            )
+        actor_block = "\n".join(actor_lines) if actor_lines else "(no actors recorded)"
+
+        return (
+            f"Total actions: **{total_actions}**\n"
+            f"Total posts (CREATE_POST + QUOTE_POST + CREATE_COMMENT): **{total_posts}**\n"
+            f"Total rounds with activity: **{total_rounds}** (last round: {max_round})\n"
+            f"Active agents (made at least one action): **{agents_active}**\n"
+            f"Actions by type: {_fmt_count_dict(by_type)}\n"
+            f"Actions by platform: {_fmt_count_dict(by_platform)}\n"
+            f"\nTop-10 most active agents (with action and post counts):\n{actor_block}"
+        )
+
+    def _load_agent_action_content(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Build {canonical_agent_name: [action_record, ...]} for this sim.
 
         Loads every CREATE_POST / CREATE_COMMENT / QUOTE_POST from the
         simulation's action logs via the existing simulation_data service
         and indexes them by the canonical agent name from the allowlist.
+        Each record is {content, action_id, timestamp, round, platform,
+        action_type} so the quote validator can both verify and cite.
         Cached on self._agent_action_content.
         """
         if self._agent_action_content is not None:
@@ -1324,7 +1502,7 @@ class ReportAgent:
         from .simulation_data import get_simulation_data
         svc = get_simulation_data()
 
-        content_by_agent: Dict[str, List[str]] = {}
+        content_by_agent: Dict[str, List[Dict[str, Any]]] = {}
         canonical_by_lower = {n.lower(): n for n in self._load_agent_allowlist()}
 
         try:
@@ -1369,8 +1547,17 @@ class ReportAgent:
                 or args.get("original_content")
                 or ""
             )
-            if isinstance(text, str) and text.strip():
-                content_by_agent.setdefault(canonical, []).append(text.strip())
+            if not (isinstance(text, str) and text.strip()):
+                continue
+
+            content_by_agent.setdefault(canonical, []).append({
+                "content": text.strip(),
+                "action_id": a.get("action_id", ""),
+                "timestamp": a.get("timestamp", ""),
+                "round": int(a.get("round_num", 0) or 0),
+                "platform": a.get("platform", ""),
+                "action_type": a.get("action_type", ""),
+            })
 
         self._agent_action_content = content_by_agent
         logger.info(
@@ -1483,9 +1670,11 @@ class ReportAgent:
         content_index = self._load_agent_action_content()
         # Pre-normalize action bodies once so repeated substring checks
         # across a multi-quote section don't re-normalize the same text.
-        normalized_index: Dict[str, List[str]] = {
-            name: [self._normalize_for_match(body) for body in bodies]
-            for name, bodies in content_index.items()
+        # Carries (normalized_content, original_record) so the validator
+        # can both match and emit a citation marker.
+        normalized_index: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {
+            name: [(self._normalize_for_match(r["content"]), r) for r in records]
+            for name, records in content_index.items()
         }
 
         problems: List[str] = []
@@ -1501,16 +1690,44 @@ class ReportAgent:
                 problems.append(f"fake_agent:{raw_name.strip()}")
                 return None
 
-            bodies = normalized_index.get(canonical, [])
-            if not any(normalized_quote in body for body in bodies):
+            entries = normalized_index.get(canonical, [])
+            # Prefer the LONGEST matching body so quotes that overlap
+            # multiple posts (rare but possible — repost / quote thread)
+            # cite the original, not the short quote-wrapper.
+            best: Optional[Tuple[str, Dict[str, Any]]] = None
+            for norm_body, record in entries:
+                if normalized_quote in norm_body:
+                    if best is None or len(norm_body) > len(best[0]):
+                        best = (norm_body, record)
+            if best is None:
                 problems.append(f"fake_quote:{canonical}")
                 return None
 
-            # Valid — rewrite with canonical name, preserve platform tag.
+            record = best[1]
+            action_id = record.get("action_id") or ""
+            # Record the citation so the report can persist citations.json
+            # alongside the markdown body. Duplicate action_ids overwrite
+            # harmlessly — the data is the same.
+            if action_id:
+                self._citations[action_id] = {
+                    "action_id": action_id,
+                    "agent": canonical,
+                    "platform": record.get("platform", ""),
+                    "timestamp": record.get("timestamp", ""),
+                    "round": record.get("round", 0),
+                    "action_type": record.get("action_type", ""),
+                    "content": record.get("content", ""),
+                }
+
+            # Valid — rewrite with canonical name, preserve platform tag,
+            # and append an inline citation marker. The marker uses the
+            # `[^cite:<id>]` syntax so it survives plain markdown
+            # consumers and is detected by the frontend renderer.
             platform = (m.group("platform") or "").strip()
+            cite = f" [^cite:{action_id}]" if action_id else ""
             return (
                 f'{m.group("pre")}{quote_text}{m.group("mid")}'
-                f'{canonical}{(" " + platform) if platform else ""}'
+                f'{canonical}{(" " + platform) if platform else ""}{cite}'
             )
 
         # Walk line-by-line so we can drop entire bad blockquote lines.
@@ -2054,6 +2271,7 @@ class ReportAgent:
             section_title=section.title,
             tools_description=self._get_tools_description(),
             agent_allowlist=self._format_agent_allowlist_for_prompt(),
+            authoritative_counts=self._format_authoritative_stats_for_prompt(),
         )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
 
@@ -2569,6 +2787,18 @@ class ReportAgent:
             report.markdown_content = ReportManager.assemble_full_report(report_id, outline)
             report.status = ReportStatus.COMPLETED
             report.completed_at = datetime.now().isoformat()
+
+            # Persist the quote → action_id index built during quote
+            # validation so the frontend can resolve `[^cite:…]` markers
+            # without re-running the whole pipeline.
+            if self._citations:
+                try:
+                    ReportManager.save_citations(report_id, self._citations)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to save citations.json for report %s: %s",
+                        report_id, exc,
+                    )
             
             # 计算总耗时
             total_time_seconds = (datetime.now() - start_time).total_seconds()
@@ -2800,6 +3030,31 @@ class ReportManager:
     def _get_progress_path(cls, report_id: str) -> str:
         """获取进度文件路径"""
         return os.path.join(cls._get_report_folder(report_id), "progress.json")
+
+    @classmethod
+    def _get_citations_path(cls, report_id: str) -> str:
+        """citations.json sidecar — quote → action_id index."""
+        return os.path.join(cls._get_report_folder(report_id), "citations.json")
+
+    @classmethod
+    def save_citations(cls, report_id: str, citations: Dict[str, Dict[str, Any]]) -> None:
+        """Persist the quote → action mapping next to the report markdown."""
+        cls._ensure_report_folder(report_id)
+        with open(cls._get_citations_path(report_id), "w", encoding="utf-8") as f:
+            json.dump(citations, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def load_citations(cls, report_id: str) -> Dict[str, Dict[str, Any]]:
+        """Read the citation sidecar, or {} if it does not exist."""
+        path = cls._get_citations_path(report_id)
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception as exc:
+            logger.warning("Failed to load citations.json for %s: %s", report_id, exc)
+            return {}
     
     @classmethod
     def _get_section_path(cls, report_id: str, section_index: int) -> str:
