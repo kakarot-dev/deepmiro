@@ -1150,7 +1150,39 @@ the same information
     - Total findings: 4 minimum, 6 maximum
     - Other sections (Population Behavior / Narrative Dynamics / etc.)
       stay in their existing analytical-paragraph format — numbered
-      findings are ONLY for the lead section."""
+      findings are ONLY for the lead section.
+
+13. [No Generic Placeholders — Name the Specific Entities]
+    Reports drift into consultancy-speak when the writer doesn't name
+    anyone specific. EVERY claim should name the actual agents,
+    platforms, frames, posts, or rounds involved — never a generic
+    placeholder like "various stakeholders" or "the discourse".
+
+    WRONG: "Various stakeholders expressed concern about the situation."
+    WRONG: "The discourse polarized around the announcement."
+    WRONG: "Industry leaders weighed in across the AI landscape."
+    WRONG: "The community reacted strongly to the policy."
+    WRONG: "Several voices on Twitter pushed back."
+
+    RIGHT: "Yudkowsky and Leike called the 30-day pause 'PR theater'
+            in 5 of their combined 13 posts."
+    RIGHT: "Founder critique consolidated by round 8, with Kunal Shah
+            and Sameer Nigam each posting 3+ times on regulatory opacity."
+    RIGHT: "Mistral's three Reddit posts reframed the pause as
+            'gatekeeping' and positioned open weights as the alternative."
+
+    Banned phrases (do not use these — they always signal generic
+    writing):
+    - "various stakeholders", "various groups", "various voices"
+    - "the discourse", "the conversation", "the debate"
+    - "the AI landscape", "the ecosystem", "the community"
+    - "industry leaders", "thought leaders", "key voices"
+    - "many", "several", "numerous" without a specific count
+    - "experts agree", "the consensus", "observers noted"
+
+    If you can't replace one of these with a specific name + count +
+    round, drop the sentence. A shorter section with concrete names
+    beats a longer one full of placeholders."""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
 Completed section content (please read carefully to avoid repetition):
