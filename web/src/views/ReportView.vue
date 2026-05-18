@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from "vue";
 import { useRouter } from "vue-router";
-import { getReport } from "@/api/simulation";
-import { renderMarkdown } from "@/lib/markdown";
+import ReportProgress from "@/components/ReportProgress.vue";
+import {
+  getCachedReport,
+  getReportById,
+  getReportProgress,
+  startReportGeneration,
+} from "@/api/simulation";
+import { renderMarkdown, renderMermaidIn } from "@/lib/markdown";
 import type { ReportDocument } from "@/types/api";
+import type { ReportProgress as ReportProgressData } from "@/api/simulation";
 
 interface Props {
   simId: string;
@@ -13,38 +20,98 @@ const props = defineProps<Props>();
 const router = useRouter();
 
 const report = ref<ReportDocument | null>(null);
-const loading = ref(true);
-const regenerating = ref(false);
+const progress = ref<ReportProgressData | null>(null);
+const generating = ref(false);
 const error = ref<string | null>(null);
+const reportBody = ref<HTMLElement | null>(null);
 
 const htmlContent = computed(() =>
   report.value?.markdown_content ? renderMarkdown(report.value.markdown_content) : "",
 );
 
-async function loadReport(force = false) {
-  loading.value = true;
-  error.value = null;
-  try {
-    const r = await getReport(props.simId, force);
-    report.value = r;
-  } catch (err: any) {
-    error.value = err?.response?.data?.error ?? err?.message ?? "Failed to load report";
-  } finally {
-    loading.value = false;
-    regenerating.value = false;
+watch(htmlContent, async (html) => {
+  if (!html) return;
+  await nextTick();
+  void renderMermaidIn(reportBody.value);
+});
+
+let pollHandle: number | null = null;
+let cancelToken = 0;
+
+function stopPolling() {
+  if (pollHandle !== null) {
+    window.clearInterval(pollHandle);
+    pollHandle = null;
   }
 }
 
-async function regenerate() {
-  if (regenerating.value) return;
+async function pollOnce(reportId: string, myToken: number) {
+  const p = await getReportProgress(reportId);
+  if (myToken !== cancelToken) return;
+  if (p) progress.value = p;
+  if (p?.status === "completed") {
+    const finished = await getReportById(reportId);
+    if (myToken !== cancelToken) return;
+    if (finished?.status === "completed") {
+      report.value = finished;
+      generating.value = false;
+      stopPolling();
+    }
+  } else if (p?.status === "failed") {
+    error.value = p.message || "Report generation failed";
+    generating.value = false;
+    stopPolling();
+  }
+}
+
+async function loadReport(force = false) {
+  cancelToken += 1;
+  const myToken = cancelToken;
+  stopPolling();
+  error.value = null;
+  progress.value = null;
+
+  if (!force) {
+    const cached = await getCachedReport(props.simId);
+    if (myToken !== cancelToken) return;
+    if (cached?.status === "completed") {
+      report.value = cached;
+      generating.value = false;
+      return;
+    }
+  }
+
+  generating.value = true;
+  report.value = null;
+  try {
+    const { report_id } = await startReportGeneration(props.simId, force);
+    if (myToken !== cancelToken) return;
+    await pollOnce(report_id, myToken);
+    if (myToken !== cancelToken) return;
+    pollHandle = window.setInterval(() => {
+      void pollOnce(report_id, myToken);
+    }, 1500);
+  } catch (err: any) {
+    if (myToken !== cancelToken) return;
+    error.value = err?.response?.data?.error ?? err?.message ?? "Failed to load report";
+    generating.value = false;
+  }
+}
+
+function regenerate() {
+  if (generating.value) return;
   if (!confirm("Regenerate the full report? This runs a fresh ReportAgent pass (~2-3 min).")) {
     return;
   }
-  regenerating.value = true;
-  await loadReport(true);
+  void loadReport(true);
 }
 
-onMounted(() => loadReport(false));
+onMounted(() => void loadReport(false));
+watch(() => props.simId, () => void loadReport(false));
+onUnmounted(() => {
+  cancelToken += 1;
+  stopPolling();
+});
 </script>
 
 <template>
@@ -59,36 +126,31 @@ onMounted(() => loadReport(false));
       <div class="report-actions">
         <button
           class="secondary"
-          :disabled="regenerating || loading"
+          :disabled="generating"
           @click="regenerate"
         >
-          {{ regenerating ? "Regenerating..." : "Regenerate" }}
+          {{ generating ? "Generating..." : "Regenerate" }}
         </button>
       </div>
     </div>
 
     <div class="report-scroll">
-      <div v-if="loading" class="loading-state">
-        <div class="loading-spinner" />
-        <p>Loading report...</p>
-      </div>
+      <ReportProgress
+        v-if="generating && !report"
+        :progress="progress"
+      />
 
       <div v-else-if="error" class="error-state">
         <p>{{ error }}</p>
-        <button class="secondary" @click="loadReport()">Retry</button>
+        <button class="secondary" @click="loadReport(false)">Retry</button>
       </div>
 
       <div v-else-if="report?.status === 'completed' && htmlContent" class="report-body">
         <article
+          ref="reportBody"
           class="report-markdown"
           v-html="htmlContent"
         />
-      </div>
-
-      <div v-else-if="report?.status === 'generating'" class="generating-state">
-        <div class="loading-spinner" />
-        <p>Generating prediction report...</p>
-        <p class="sub">This usually takes 1–3 minutes. Feel free to come back later.</p>
       </div>
 
       <div v-else class="error-state">
@@ -154,9 +216,7 @@ onMounted(() => loadReport(false));
   padding: var(--gap-xl) var(--gap-lg);
 }
 
-.loading-state,
-.error-state,
-.generating-state {
+.error-state {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -165,20 +225,6 @@ onMounted(() => loadReport(false));
   padding: var(--gap-xl);
   color: var(--fg-muted);
   text-align: center;
-}
-
-.loading-spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid var(--border);
-  border-top-color: var(--primary);
-  border-radius: var(--radius-full);
-  animation: spin 1s linear infinite;
-}
-
-.sub {
-  font-size: 12px;
-  color: var(--fg-subtle);
 }
 
 .report-body {
@@ -300,5 +346,26 @@ onMounted(() => loadReport(false));
 .report-markdown :deep(strong) {
   color: var(--fg-strong);
   font-weight: 600;
+}
+
+.report-markdown :deep(.mermaid-chart) {
+  display: flex;
+  justify-content: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--gap-md);
+  margin: var(--gap-md) 0;
+  overflow-x: auto;
+}
+
+.report-markdown :deep(.mermaid-chart svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.report-markdown :deep(.mermaid-fallback) {
+  font-size: 12px;
+  color: var(--fg-subtle);
 }
 </style>

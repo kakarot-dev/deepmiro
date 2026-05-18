@@ -965,7 +965,72 @@ response pattern..." This assessment reflects...
 6. Maintain logical coherence with other sections
 6. [Avoid Repetition] Carefully read the completed sections below; do not repeat \
 the same information
-7. [Emphasis] Do not add any headings! Use **bold text** instead of sub-headings"""
+7. [Emphasis] Do not add any headings! Use **bold text** instead of sub-headings
+
+8. [Quantify -- Use Real Numbers, Not Vague Adjectives]
+   Reports without numbers read as opinion pieces. Every behavioural
+   claim should be backed by a count or a percentage you computed from
+   the tool returns. Examples:
+
+   - "78% of the 18 founder posts called for regulatory transparency"
+     (NOT "many founders called for transparency")
+   - "Customers account for 41 of 119 actions (34%), making them the
+     most active group"
+     (NOT "customers were very active")
+   - "Critical sentiment dominated 3 of the 4 stakeholder clusters"
+     (NOT "most groups were critical")
+
+   Derive percentages from the same tool returns the verbatim quotes
+   come from — do not invent figures. If you only have raw counts,
+   compute the percentage yourself; do not round to "majority" or
+   "many".
+
+9. [Tables -- Use Them For Any Multi-Group Breakdown]
+   When you have a count or percentage broken down by stakeholder,
+   platform, sentiment, or round, render it as a Markdown table — not
+   as prose. The reader scans tables; they skim prose. Example:
+
+   | Stakeholder    | Posts | % Critical | Top frame                |
+   | -------------- | ----- | ---------- | ------------------------ |
+   | Founders       | 18    | 78%        | "regulatory opacity"     |
+   | Customers      | 41    | 64%        | "payment failed"         |
+   | Fintech orgs   | 22    | 0%         | "alternative payment"    |
+
+   Limit tables to 6 rows max; if you have more, pick the top 6 by the
+   metric that matters.
+
+10. [Charts -- Add ONE Mermaid Block Per Section When Data Supports It]
+    If the section is about a distribution (sentiment split, role
+    breakdown, action mix, sentiment-by-round trend), include exactly
+    ONE Mermaid chart at the top of the body. Use real numbers from the
+    tool returns. Supported chart types:
+
+    Pie chart for a single split:
+    ```mermaid
+    pie title Stakeholder activity share
+        "Customers" : 41
+        "Founders" : 18
+        "Fintech orgs" : 22
+        "Regulators" : 6
+    ```
+
+    Bar chart for sentiment / scoring across groups:
+    ```mermaid
+    xychart-beta
+        title "Critical sentiment by stakeholder (% of group posts)"
+        x-axis ["Founders", "Customers", "Critics", "Fintechs"]
+        y-axis "% Critical" 0 --> 100
+        bar [78, 64, 92, 5]
+    ```
+
+    Skip the chart if you do not have the underlying numbers from
+    tools. Never write a chart with fabricated values just to fill the
+    slot. A section can have either a chart, a table, or both — but at
+    most ONE mermaid block per section.
+
+    Place the mermaid block immediately after the section's first
+    paragraph of analysis, so the reader sees the quantitative summary
+    before the supporting quotes."""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
 Completed section content (please read carefully to avoid repetition):
@@ -982,6 +1047,12 @@ Completed section content (please read carefully to avoid repetition):
 4. Every quote MUST come from actual agent posts — use their real names
 5. Mix simulation data tools with graph search tools for context
 6. Do NOT fabricate quotes — only cite what agents actually wrote
+7. Quantify findings: convert counts you see in tool returns into
+   percentages. Put multi-group breakdowns into a markdown table, not
+   prose.
+8. If the section is about a distribution or trend AND you have the
+   numbers, include exactly ONE ```mermaid``` pie or xychart-beta block
+   near the top of the body. Skip it when you do not have the data.
 
 [Format Warning -- Must Follow]
 - Do NOT write any headings (#, ##, ###, #### are all prohibited)

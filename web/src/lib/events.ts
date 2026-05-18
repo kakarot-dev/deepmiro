@@ -82,8 +82,12 @@ export class SimulationEventStream {
             }
             break;
           case "ACTION":
-          case "POST":
             this.handlers.onAction?.(evt);
+            break;
+          case "POST":
+            // POST is a convenience co-emit for CREATE_POST/CREATE_COMMENT/
+            // QUOTE_POST that already came through as an ACTION. Ignore
+            // here so the feed doesn't show duplicates.
             break;
           case "ROUND_END":
             this.handlers.onRoundEnd?.(evt);

@@ -64,11 +64,28 @@ function describe(a: AgentActionRecord): { verb: string; content?: string; targe
       return { verb: "posted", content: args?.content };
     case "CREATE_COMMENT":
       return { verb: "commented", content: args?.content, target: args?.post_id ? `post #${args.post_id}` : undefined };
-    case "QUOTE_POST":
-      return { verb: "quoted", content: args?.content, target: args?.post_id ? `post #${args.post_id}` : undefined };
+    case "QUOTE_POST": {
+      const quoteText = args?.quote_content ?? args?.content;
+      const original = args?.original_author_name
+        ? `@${args.original_author_name}`
+        : args?.quoted_id
+          ? `post #${args.quoted_id}`
+          : args?.post_id
+            ? `post #${args.post_id}`
+            : undefined;
+      return { verb: "quoted", content: quoteText, target: original };
+    }
     case "REPOST":
-    case "RETWEET":
-      return { verb: "reposted", target: args?.post_id ? `post #${args.post_id}` : undefined };
+    case "RETWEET": {
+      const original = args?.original_author_name
+        ? `@${args.original_author_name}`
+        : args?.reposted_id
+          ? `post #${args.reposted_id}`
+          : args?.post_id
+            ? `post #${args.post_id}`
+            : undefined;
+      return { verb: "reposted", content: args?.original_content, target: original };
+    }
     case "LIKE_POST":
     case "UPVOTE_POST":
     case "UPVOTE":

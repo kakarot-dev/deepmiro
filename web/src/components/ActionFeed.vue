@@ -39,8 +39,14 @@ function actionLabel(type: string): string {
 }
 
 function actionContent(a: AgentActionRecord): string | undefined {
-  const c = a.action_args?.content;
-  return typeof c === "string" && c.trim() ? c : undefined;
+  const args = a.action_args as Record<string, unknown> | undefined;
+  if (!args) return undefined;
+  const c =
+    (typeof args.content === "string" && args.content) ||
+    (typeof args.quote_content === "string" && args.quote_content) ||
+    (typeof args.original_content === "string" && args.original_content) ||
+    undefined;
+  return c && c.trim() ? c : undefined;
 }
 
 function keyFor(a: AgentActionRecord, i: number): string {

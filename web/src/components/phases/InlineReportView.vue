@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Loader2, FileText, AlertTriangle, Sparkles, RotateCw } from "lucide-vue-next";
-import MarkdownIt from "markdown-it";
-import DOMPurify from "dompurify";
 import Button from "@/components/ui/Button.vue";
-import { getReport } from "@/api/simulation";
+import ReportProgress from "@/components/ReportProgress.vue";
+import {
+  getCachedReport,
+  getReportById,
+  getReportProgress,
+  startReportGeneration,
+} from "@/api/simulation";
+import { renderMarkdown, renderMermaidIn } from "@/lib/markdown";
 import type { ReportDocument } from "@/types/api";
+import type { ReportProgress as ReportProgressData } from "@/api/simulation";
 
 interface Props {
   simId: string;
@@ -15,46 +21,99 @@ interface Props {
 const props = defineProps<Props>();
 
 const report = ref<ReportDocument | null>(null);
-const loading = ref(false);
+const progress = ref<ReportProgressData | null>(null);
 const generating = ref(false);
 const err = ref<string | null>(null);
+const reportBody = ref<HTMLElement | null>(null);
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 const renderedHtml = computed(() => {
-  if (!report.value) return "";
-  const body = report.value.markdown_content ?? "";
-  return DOMPurify.sanitize(md.render(body));
+  if (!report.value?.markdown_content) return "";
+  return renderMarkdown(report.value.markdown_content);
 });
 
-async function fetchReport() {
-  if (!props.isCompleted) return;
-  loading.value = true;
-  err.value = null;
-  try {
-    const r = await getReport(props.simId);
-    report.value = r;
-  } catch (e: any) {
-    err.value = e?.message ?? "Failed to load report";
-  } finally {
-    loading.value = false;
+watch(renderedHtml, async (html) => {
+  if (!html) return;
+  await nextTick();
+  void renderMermaidIn(reportBody.value);
+});
+
+let pollHandle: number | null = null;
+let cancelToken = 0;
+
+function stopPolling() {
+  if (pollHandle !== null) {
+    window.clearInterval(pollHandle);
+    pollHandle = null;
   }
 }
 
-async function regenerateReport() {
-  generating.value = true;
+async function pollOnce(reportId: string, myToken: number) {
+  const p = await getReportProgress(reportId);
+  if (myToken !== cancelToken) return;
+  if (p) progress.value = p;
+  if (p?.status === "completed") {
+    const finished = await getReportById(reportId);
+    if (myToken !== cancelToken) return;
+    if (finished?.status === "completed") {
+      report.value = finished;
+      generating.value = false;
+      stopPolling();
+    }
+  } else if (p?.status === "failed") {
+    err.value = p.message || "Report generation failed";
+    generating.value = false;
+    stopPolling();
+  }
+}
+
+async function ensureReport(force = false) {
+  if (!props.isCompleted) return;
+  cancelToken += 1;
+  const myToken = cancelToken;
+  stopPolling();
   err.value = null;
+  progress.value = null;
+
+  if (!force) {
+    const cached = await getCachedReport(props.simId);
+    if (myToken !== cancelToken) return;
+    if (cached?.status === "completed") {
+      report.value = cached;
+      generating.value = false;
+      return;
+    }
+  }
+
+  generating.value = true;
+  report.value = null;
   try {
-    const r = await getReport(props.simId, true);
-    report.value = r;
+    const { report_id } = await startReportGeneration(props.simId, force);
+    if (myToken !== cancelToken) return;
+    await pollOnce(report_id, myToken);
+    if (myToken !== cancelToken) return;
+    pollHandle = window.setInterval(() => {
+      void pollOnce(report_id, myToken);
+    }, 1500);
   } catch (e: any) {
-    err.value = e?.message ?? "Generation failed";
-  } finally {
+    if (myToken !== cancelToken) return;
+    err.value = e?.message ?? "Failed to start report";
     generating.value = false;
   }
 }
 
-onMounted(fetchReport);
-watch(() => [props.simId, props.isCompleted], fetchReport);
+function regenerateReport() {
+  void ensureReport(true);
+}
+
+onMounted(() => void ensureReport(false));
+watch(
+  () => [props.simId, props.isCompleted] as const,
+  () => void ensureReport(false),
+);
+onUnmounted(() => {
+  cancelToken += 1;
+  stopPolling();
+});
 </script>
 
 <template>
@@ -63,10 +122,10 @@ watch(() => [props.simId, props.isCompleted], fetchReport);
       <FileText :size="32" />
       <p>The report becomes available once the simulation completes.</p>
     </div>
-    <div v-else-if="loading" class="state loading">
-      <Loader2 :size="24" class="spin" />
-      <span>Loading report…</span>
-    </div>
+    <ReportProgress
+      v-else-if="generating && !report"
+      :progress="progress"
+    />
     <div v-else-if="err" class="state error">
       <AlertTriangle :size="24" />
       <span>{{ err }}</span>
@@ -84,7 +143,7 @@ watch(() => [props.simId, props.isCompleted], fetchReport);
           {{ generating ? "Regenerating…" : "Regenerate report" }}
         </Button>
       </div>
-      <div class="report" v-html="renderedHtml" />
+      <div ref="reportBody" class="report" v-html="renderedHtml" />
     </article>
   </div>
 </template>
@@ -158,4 +217,35 @@ watch(() => [props.simId, props.isCompleted], fetchReport);
   border-radius: var(--radius-sm);
 }
 .report :deep(a) { color: var(--primary); text-decoration: underline; }
+.report :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--gap-md) 0;
+  font-size: 14px;
+}
+.report :deep(th),
+.report :deep(td) {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.report :deep(th) {
+  background: var(--card);
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+.report :deep(.mermaid-chart) {
+  display: flex;
+  justify-content: center;
+  background: var(--bg-elevated, var(--card));
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-md);
+  padding: var(--gap-md);
+  margin: var(--gap-md) 0;
+  overflow-x: auto;
+}
+.report :deep(.mermaid-chart svg) {
+  max-width: 100%;
+  height: auto;
+}
 </style>

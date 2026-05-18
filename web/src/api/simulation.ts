@@ -64,35 +64,87 @@ export async function listSims(limit = 20): Promise<SimulationSummary[]> {
   return data.data ?? [];
 }
 
-/** Fetch a report (triggers generation if not cached). */
-export async function getReport(simId: string, force = false): Promise<ReportDocument> {
-  if (!force) {
-    try {
-      const { data } = await http.get<Envelope<ReportDocument>>(
-        `/api/report/by-simulation/${simId}`,
-      );
-      if (data.data) return data.data;
-    } catch {
-      /* fall through to generate */
-    }
+export interface ReportProgress {
+  status: "pending" | "planning" | "generating" | "completed" | "failed";
+  progress: number; // 0-100, or -1 when failed
+  message: string;
+  current_section?: string;
+  completed_sections?: string[];
+  total_sections?: number;
+  updated_at?: string;
+}
+
+/** Snapshot of a report if one already exists; returns null on 404. */
+export async function getCachedReport(simId: string): Promise<ReportDocument | null> {
+  try {
+    const { data } = await http.get<Envelope<ReportDocument>>(
+      `/api/report/by-simulation/${simId}`,
+    );
+    return data.data ?? null;
+  } catch {
+    return null;
   }
+}
+
+/** Kick off generation. Returns report_id (use it to poll progress). */
+export async function startReportGeneration(
+  simId: string,
+  force = false,
+): Promise<{ report_id: string; task_id: string }> {
   const { data } = await http.post<Envelope<{ report_id: string; task_id: string }>>(
     "/api/report/generate",
     { simulation_id: simId, force_regenerate: force },
   );
-  if (!data.success) throw new Error(data.error ?? "Report generation failed");
+  if (!data.success || !data.data) {
+    throw new Error(data.error ?? "Report generation failed");
+  }
+  return data.data;
+}
 
-  // Poll for completion (up to 5 min)
-  for (let i = 0; i < 150; i++) {
+/** Live progress for a generating report. Returns null if not yet tracked. */
+export async function getReportProgress(reportId: string): Promise<ReportProgress | null> {
+  try {
+    const { data } = await http.get<Envelope<ReportProgress>>(
+      `/api/report/${reportId}/progress`,
+    );
+    return data.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Final report document by report_id. */
+export async function getReportById(reportId: string): Promise<ReportDocument | null> {
+  try {
+    const { data } = await http.get<Envelope<ReportDocument>>(
+      `/api/report/${reportId}`,
+    );
+    return data.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch a report (triggers generation if not cached). Kept for backward
+ *  compat — UIs that want live progress should use startReportGeneration +
+ *  getReportProgress directly. */
+export async function getReport(simId: string, force = false): Promise<ReportDocument> {
+  if (!force) {
+    const cached = await getCachedReport(simId);
+    if (cached?.status === "completed") return cached;
+  }
+  const { report_id } = await startReportGeneration(simId, force);
+
+  for (let i = 0; i < 180; i++) {
     await new Promise((r) => setTimeout(r, 2000));
-    try {
-      const resp = await http.get<Envelope<ReportDocument>>(
-        `/api/report/by-simulation/${simId}`,
-      );
-      const r = resp.data.data;
-      if (r?.status === "completed") return r;
-      if (r?.status === "failed") throw new Error("Report generation failed");
-    } catch { /* still generating */ }
+    const prog = await getReportProgress(report_id);
+    if (prog?.status === "completed") {
+      const finished = await getReportById(report_id);
+      if (finished) return finished;
+    }
+    if (prog?.status === "failed") {
+      throw new Error(prog.message || "Report generation failed");
+    }
   }
   throw new Error("Report generation timed out");
 }
