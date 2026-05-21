@@ -3,34 +3,50 @@ backend:
   imagePullPolicy: Always
   port: 5001
   resources:
-    # Bumped from 4Gi → 8Gi after OOMKills during multi-platform sims.
-    # v0.10.0 moves the TWHIN-BERT model into a sidecar container, so
-    # the backend itself no longer carries 1.5 GB × N for concurrent
-    # sims — but the per-agent OASIS state and the LLM clients still
-    # need real headroom. 8Gi gives us room for 3-4 concurrent sims
-    # without risking OOM.
+    # IMPORTANT — the production node (jenny) has only ~11 GiB of
+    # physical RAM. Limits must SUM to less than that across every
+    # container, or the kernel OOM-killer fires under load and kills
+    # a victim (exitCode 137). A prior "fix" raised this to 8Gi —
+    # that made it worse: an 8Gi limit + twhin 2.5Gi + surreal 2Gi +
+    # mcp/hosted = ~13.9Gi of limits on an 11Gi box (116% over).
+    # Raising a limit does not add RAM; it just lets one container
+    # starve the others.
+    #
+    # Right-sized so the SUM of all container limits stays ~10Gi
+    # (1Gi left for the OS). The backend idles at ~1.8Gi and peaks
+    # ~3Gi during report generation; 4Gi is safe headroom for a
+    # couple of concurrent sims. Running 3-4 concurrent sims needs a
+    # bigger node — that is a VPS-upgrade conversation, not a
+    # limit-bump one.
     requests:
-      memory: "4Gi"
+      memory: "2Gi"
       cpu: "1000m"
     limits:
-      memory: "8Gi"
+      memory: "4Gi"
       cpu: "3000m"
 
 twhinSidecar:
   # Pod-scoped TWHIN-BERT embedding service. Loads the model exactly
   # once per pod regardless of how many sim subprocesses are running.
   # Listens on localhost:7001, only reachable from inside the pod.
+  #
+  # NOTE: this container shares the pod's Ready condition — when it
+  # OOM-dies and restarts, the WHOLE pod goes NotReady, the backend
+  # Service drops it from endpoints, and every request 502s until
+  # the model reloads. So keeping it inside its memory budget is
+  # load-bearing for backend availability, not just for embeddings.
   image: ghcr.io/kakarot-dev/deepmiro-twhin-sidecar:latest
   imagePullPolicy: Always
   port: 7001
   resources:
-    # Memory is mostly the model weights (~1.5 GiB) + tokenizer cache
-    # + headroom for batches. CPU only spikes during embed calls.
+    # Model weights (~1.5 GiB) + tokenizer cache + batch headroom.
+    # It was the OOM victim at the old 2500Mi cap (node-pressure
+    # kill, reason=Error not OOMKilled), so give it a little more.
     requests:
       memory: "1500Mi"
       cpu: "200m"
     limits:
-      memory: "2500Mi"
+      memory: "3Gi"
       cpu: "1000m"
 
 mcp:
