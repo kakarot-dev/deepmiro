@@ -199,9 +199,16 @@ def _ensure_english(messages: List[Dict]) -> List[Dict]:
 # Boost model routing
 # ---------------------------------------------------------------------------
 
-# Modules that should use the boost model
+# Modules that should use the boost model.
+#
+# report_agent was removed: the boost model (gpt-oss-120b) is a
+# reasoning model that, via Fireworks, intermittently returns a fast
+# 200 with content=None — its output never reaches the `content`
+# field. That blanked report sections no matter how high max_tokens
+# went. Report section writing is structured writing, not a reasoning
+# puzzle; the primary model (minimax-m2p5) does it reliably — it
+# already writes every persona post in every simulation.
 BOOST_MODULES = {
-    "app.services.report_agent",
     "app.services.oasis_profile_generator",
 }
 
@@ -323,6 +330,20 @@ class LLMClient:
 
         response = active_client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content
+
+        # Empty content from a successful call is almost always a
+        # reasoning model that put everything in its analysis channel,
+        # or a content-filter finish. Log enough to diagnose instead of
+        # silently returning None.
+        if content is None:
+            try:
+                finish = response.choices[0].finish_reason
+            except Exception:
+                finish = "?"
+            logger.warning(
+                "LLM returned empty content (model=%s, finish_reason=%s)",
+                active_model, finish,
+            )
 
         # 4. Model-specific postprocessing
         if isinstance(content, str):
