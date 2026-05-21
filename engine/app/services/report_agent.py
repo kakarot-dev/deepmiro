@@ -1847,13 +1847,80 @@ class ReportAgent:
         # dropped quote lines (keeps markdown clean).
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
+        # Deterministic round-language fix — see _fix_round_language.
+        cleaned = self._fix_round_language(cleaned)
+
         if problems:
             logger.warning(
                 "ReportAgent: dropped %d bad blockquote lines: %s",
                 len(problems), problems,
             )
         return cleaned, problems
-    
+
+    def _fix_round_language(self, content: str) -> str:
+        """Rewrite "single round" misstatements with a factually correct
+        phrase.
+
+        The LLM intermittently calls a multi-round simulation a "single
+        round" no matter how firmly the GROUND TRUTH block and the
+        per-observation reminder say otherwise — prompt instructions are
+        probabilistic. This is the deterministic backstop: if the sim
+        genuinely ran more than one round, every "single round" variant
+        is a factual error, so it is safe to rewrite unconditionally.
+
+        Only fires when total_rounds > 1. The replacement phrases are
+        round-count-neutral so they read correctly in any sentence the
+        LLM built around them.
+        """
+        stats = self._load_authoritative_stats()
+        total_rounds = stats.get("total_rounds", 0) if stats else 0
+        if total_rounds <= 1:
+            return content  # genuinely single-round — nothing to fix
+
+        # (pattern, replacement) — ordered longest-match-first so the
+        # specific phrases win before the generic ones. Case-insensitive;
+        # the replacements are lowercase-neutral and read fine mid-
+        # sentence ("... divided, within the observation window, ...").
+        substitutions = [
+            (r"in the single simulated round", "across the observation window"),
+            (r"within a single simulated round", "across the observation window"),
+            (r"within a single round of activity", "within the observation window"),
+            (r"in a single round of activity", "within the observation window"),
+            (r"the single simulated round", "the observation window"),
+            (r"a single simulated round", "the observation window"),
+            (r"single simulated round", "observation window"),
+            (r"within a single round", "across the simulation"),
+            (r"in a single round", "across the simulation"),
+            (r"during a single round", "across the simulation"),
+            (r"a single round of activity", "the observation window"),
+            (r"single round of activity", "observation window"),
+            (r"in just one round", "across the simulation"),
+            (r"within one round", "across the simulation"),
+            (r"a single round", "the simulation"),
+            (r"one simulated round", "the simulation"),
+        ]
+        fixed = content
+        hits = 0
+        for pattern, replacement in substitutions:
+            def _repl(m: "re.Match[str]", _r: str = replacement) -> str:
+                # Preserve sentence-start capitalization: if the matched
+                # phrase began with an uppercase letter, capitalize the
+                # replacement so "Within a single round" → "Across …".
+                matched = m.group(0)
+                if matched[:1].isupper():
+                    return _r[:1].upper() + _r[1:]
+                return _r
+            new_fixed, n = re.subn(pattern, _repl, fixed, flags=re.IGNORECASE)
+            if n:
+                fixed = new_fixed
+                hits += n
+        if hits:
+            logger.info(
+                "ReportAgent: rewrote %d 'single round' misstatement(s) "
+                "(sim ran %d rounds)", hits, total_rounds,
+            )
+        return fixed
+
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """定义可用工具"""
         return {
