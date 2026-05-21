@@ -94,7 +94,22 @@ class JsonlSimulationData(SimulationDataService):
         return os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
 
     def _load_actions(self, simulation_id: str) -> List[Dict[str, Any]]:
-        """Load all actions from both platform JSONL files.
+        """Load real agent actions from both platform JSONL files.
+
+        The JSONL log interleaves two kinds of line:
+          - lifecycle EVENTS — `{"event_type": "round_start", ...}`,
+            round_end, simulation_start, simulation_end
+          - agent ACTIONS    — `{"action_type": "CREATE_POST", ...}`
+
+        Only the action lines are returned. Counting event lines as
+        actions inflated every total the report relies on (a 90-action
+        sim showed up as 178). Event lines are dropped here so every
+        downstream consumer — counts, citations, the report's GROUND
+        TRUTH block — sees actions only.
+
+        Round field is normalized: the log writes `round`, but legacy
+        code reads `round_num`. We copy `round` → `round_num` so both
+        keys work and nothing downstream needs to change.
 
         Each returned action carries an `action_id` — a deterministic
         12-char digest used by the report's citation system to link a
@@ -112,15 +127,25 @@ class JsonlSimulationData(SimulationDataService):
                             continue
                         try:
                             action = json.loads(line)
+                            # Drop lifecycle event lines — only keep
+                            # genuine agent actions.
+                            if not action.get("action_type"):
+                                continue
                             if "platform" not in action:
                                 action["platform"] = platform
+                            # Normalize the round field — the log writes
+                            # `round`, downstream code reads `round_num`.
+                            round_val = action.get("round_num")
+                            if round_val is None:
+                                round_val = action.get("round", 0)
+                            action["round_num"] = int(round_val or 0)
                             action["action_id"] = action_id_for(
                                 simulation_id=simulation_id,
                                 platform=action.get("platform", platform),
                                 agent_name=action.get("agent_name", ""),
                                 timestamp=action.get("timestamp", ""),
                                 action_type=action.get("action_type", ""),
-                                round_num=int(action.get("round_num", 0) or 0),
+                                round_num=action["round_num"],
                             )
                             actions.append(action)
                         except json.JSONDecodeError:

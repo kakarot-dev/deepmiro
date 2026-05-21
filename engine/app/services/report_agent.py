@@ -1546,7 +1546,36 @@ class ReportAgent:
             f"filling in `[rounds X-Y]` confidence tags on findings. If a "
             f"finding spans multiple agents, use the min(first_round) and "
             f"max(last_round) across the cited agents. Never write "
-            f"`rounds 0-0` — that's the placeholder we're trying to kill."
+            f"`rounds 0-0` — that's the placeholder we're trying to kill.\n"
+            f"\nFORBIDDEN denominators: the ONLY valid totals for percentages "
+            f"are {total_actions} (all actions) and {total_posts} (posts). "
+            f"Do NOT divide by any other number — if you write 'X% of "
+            f"actions' it must be X/{total_actions}; 'X% of posts' must be "
+            f"X/{total_posts}. The simulation ran {total_rounds} rounds — "
+            f"NEVER describe it as a 'single round' or 'one round'."
+        )
+
+    def _format_authoritative_stats_compact(self) -> str:
+        """One-line ground-truth reminder appended to every tool observation.
+
+        The full GROUND TRUTH block lives in the system prompt, but after
+        a multi-step ReACT loop the LLM writes its Final Answer with that
+        block far back in context and drifts — inventing denominators,
+        calling a 20-round sim a 'single round'. Re-stating the canonical
+        totals on every observation keeps them in recent context right
+        when the LLM decides to write the section.
+        """
+        stats = self._load_authoritative_stats()
+        if not stats:
+            return ""
+        ta = stats.get("total_actions", 0)
+        tp = stats.get("total_posts", 0)
+        tr = stats.get("total_rounds", 0)
+        return (
+            f"\n[GROUND TRUTH — unchangeable] This simulation has exactly "
+            f"{ta} actions, {tp} posts, across {tr} rounds. Every percentage "
+            f"must use {ta} or {tp} as its denominator. Do not invent other "
+            f"totals. Do not call it a single round.\n"
         )
 
     def _load_agent_action_content(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -2620,7 +2649,7 @@ class ReportAgent:
                         max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                         used_tools_str=", ".join(used_tools),
                         unused_hint=unused_hint,
-                    ) + empty_hint,
+                    ) + empty_hint + self._format_authoritative_stats_compact(),
                 })
                 continue
 
