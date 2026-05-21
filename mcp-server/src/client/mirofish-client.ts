@@ -332,16 +332,22 @@ export class MirofishClient {
       { simulation_id: simulationId, force_regenerate: forceRegenerate },
     );
     const data = genResp.data?.data;
-    if (!data) {
-      throw new MirofishBackendError("Report generation didn't return task_id", 500);
+    if (!data?.report_id) {
+      throw new MirofishBackendError("Report generation didn't return a report_id", 500);
     }
+    const reportId = data.report_id;
 
-    // Poll for completion (up to 10 min)
+    // Poll the SPECIFIC report_id, not by-simulation. On a
+    // force_regenerate a fresh report_id is created while the old
+    // completed report still exists — polling by-simulation would
+    // return that stale completed report and short-circuit before the
+    // new generation finishes. Tracking the exact report_id we were
+    // handed is the only correct way to wait for *this* run.
     for (let i = 0; i < 300; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       try {
         const r = await this.http.get<MirofishApiResponse<Report>>(
-          `/api/report/by-simulation/${simulationId}`,
+          `/api/report/${reportId}`,
         );
         const rep = r.data?.data;
         if (rep?.status === "completed") return rep;
