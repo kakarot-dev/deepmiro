@@ -725,6 +725,13 @@ focused on core predictive findings."""
 
 # ── 章节生成 prompt ──
 
+# Token budget for one section-generation LLM call. Large because the
+# report agent routes to the boost model (a reasoning model) whose
+# hidden reasoning channel shares this budget with the final answer.
+# 4096 was too small — reasoning ate the whole budget and the model
+# returned empty content, blanking sections.
+SECTION_MAX_TOKENS = 16000
+
 SECTION_SYSTEM_PROMPT_TEMPLATE = """\
 You are an expert writer of "Future Prediction Reports," currently writing a \
 section of the report. You MUST write ALL output in English only -- no Chinese, \
@@ -2191,7 +2198,12 @@ class ReportAgent:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                # Reasoning-model headroom — see SECTION_MAX_TOKENS. A
+                # starved planner returned None, chat_json crashed, and
+                # the report fell back to the generic default outline
+                # (the "Future Prediction Report" title bug).
+                max_tokens=SECTION_MAX_TOKENS,
             )
             
             if progress_callback:
@@ -2450,10 +2462,15 @@ class ReportAgent:
                 )
             
             # 调用LLM
+            # max_tokens is generous because report_agent routes to the
+            # boost model (gpt-oss-120b), a REASONING model. Its hidden
+            # reasoning channel and the final answer share the token
+            # budget — at 4096 the model burned the whole budget on
+            # reasoning and returned content=None, blanking sections.
             response = self.llm.chat(
                 messages=messages,
                 temperature=0.5,
-                max_tokens=4096
+                max_tokens=SECTION_MAX_TOKENS,
             )
 
             # 检查 LLM 返回是否为 None（API 异常或内容为空）
@@ -2695,11 +2712,12 @@ class ReportAgent:
         # 达到最大迭代次数，强制生成内容
         logger.warning(t('report.sectionMaxIter', title=section.title))
         messages.append({"role": "user", "content": REACT_FORCE_FINAL_MSG})
-        
+
+        # Same reasoning-model headroom as the main loop — see note above.
         response = self.llm.chat(
             messages=messages,
             temperature=0.5,
-            max_tokens=4096
+            max_tokens=SECTION_MAX_TOKENS,
         )
 
         # 检查强制收尾时 LLM 返回是否为 None

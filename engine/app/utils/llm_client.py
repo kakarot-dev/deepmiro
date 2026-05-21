@@ -364,6 +364,15 @@ class LLMClient:
                 max_tokens=max_tokens,
             )
 
+        # A reasoning model that spends its whole token budget on the
+        # hidden reasoning channel returns content=None. Fail loud and
+        # clear instead of an opaque AttributeError on .strip().
+        if response is None:
+            raise ValueError(
+                "LLM returned empty content (no JSON) — likely a reasoning "
+                "model that exhausted max_tokens before emitting an answer."
+            )
+
         # Clean markdown code block markers
         cleaned_response = response.strip()
         cleaned_response = re.sub(r'^```(?:json)?\s*\n?', '', cleaned_response, flags=re.IGNORECASE)
